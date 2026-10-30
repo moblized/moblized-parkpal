@@ -32,9 +32,10 @@ object OverpassApi {
 
     /** Parking within [radiusMeters] of a point, in no particular order. */
     suspend fun nearby(lat: Double, lon: Double, radiusMeters: Int): List<ParkingPlace> {
-        val query = "[out:json][timeout:15];" +
+        // "out center" keeps coordinates for parking mapped as single points and a center point for lots.
+        val query = "[out:json][timeout:20];" +
             "nwr[\"amenity\"=\"parking\"](around:$radiusMeters,${Format.latLon(lat, lon)});" +
-            "out tags center qt 500;"
+            "out center qt 500;"
         val body = fetchHedged(query)
         return withContext(Dispatchers.Default) { parse(body) }
     }
@@ -102,7 +103,14 @@ object OverpassApi {
         conn.outputStream.use { it.write(("data=" + URLEncoder.encode(query, "UTF-8")).toByteArray()) }
         val code = conn.responseCode
         if (code !in 200..299) throw IOException("Map server busy (HTTP $code)")
-        return conn.inputStream.bufferedReader().use { it.readText() }
+        val body = conn.inputStream.bufferedReader().use { it.readText() }
+        // A timed-out query still answers "OK", just with an error note and missing results. Count it as a
+        // failure so the next server is tried, instead of showing (and saving) an empty area.
+        if (body.contains("\"remark\"")) {
+            val remark = runCatching { JSONObject(body).optString("remark") }.getOrDefault("")
+            if (remark.contains("error", ignoreCase = true)) throw IOException("Map server busy ($remark)")
+        }
+        return body
     }
 
     private fun parse(json: String): List<ParkingPlace> {

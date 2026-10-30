@@ -40,7 +40,8 @@ object ParkingRepo {
         // Tidy up very old areas in the background.
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             val cutoff = System.currentTimeMillis() - MAX_AGE_MS
-            d.listFiles()?.filter { it.lastModified() < cutoff }?.forEach { it.delete() }
+            // Also clear out saves from build 4 (no "v2_" prefix), which could be missing parking.
+            d.listFiles()?.filter { it.lastModified() < cutoff || !it.name.startsWith("v2_") }?.forEach { it.delete() }
         }
     }
 
@@ -52,14 +53,16 @@ object ParkingRepo {
         val cLat = snap(lat)
         val cLon = snap(lon)
         val queryRadius = radiusMeters + SNAP_PADDING_M
-        val key = String.format(Locale.US, "%.3f_%.3f_%d", cLat, cLon, queryRadius)
+        // "v2": ignore anything saved by build 4, which could be missing parking.
+        val key = String.format(Locale.US, "v2_%.3f_%.3f_%d", cLat, cLon, queryRadius)
         val cached = read(key)
         if (cached != null) emit(sortFrom(cached.places, lat, lon))
         val now = System.currentTimeMillis()
         if (cached == null || now - cached.savedAt > FRESH_MS) {
             try {
                 val fresh = OverpassApi.nearby(cLat, cLon, queryRadius)
-                write(key, Entry(now, fresh))
+                // Don't save an empty area: it's more likely a hiccup than truly no parking, so ask again next time.
+                if (fresh.isNotEmpty()) write(key, Entry(now, fresh))
                 if (cached == null || cached.places.map { it.id } != fresh.map { it.id }) {
                     emit(sortFrom(fresh, lat, lon))
                 }
