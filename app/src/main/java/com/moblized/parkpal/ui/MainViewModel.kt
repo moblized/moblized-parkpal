@@ -11,20 +11,27 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.moblized.parkpal.data.AppSettings
 import com.moblized.parkpal.data.Clearance
+import com.moblized.parkpal.data.Destination
 import com.moblized.parkpal.data.FeeInfo
 import com.moblized.parkpal.data.FitStatus
 import com.moblized.parkpal.data.Geo
-import com.moblized.parkpal.data.GeoResult
 import com.moblized.parkpal.data.OverpassApi
 import com.moblized.parkpal.data.ParkActions
 import com.moblized.parkpal.data.ParkStore
+import com.moblized.parkpal.data.ParkingKind
 import com.moblized.parkpal.data.ParkingPlace
 import com.moblized.parkpal.data.ParkingSession
+import com.moblized.parkpal.data.RouteApi
 import com.moblized.parkpal.data.SettingsStore
 import com.moblized.parkpal.update.UpdateInfo
 import com.moblized.parkpal.update.Updater
+import com.moblized.parkpal.util.Format
+import com.moblized.parkpal.util.LocationHelper
+import com.moblized.parkpal.util.Nav
+import com.moblized.parkpal.util.distanceMeters
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -53,6 +60,29 @@ data class Filters(
 
 data class MapFocus(val lat: Double, val lon: Double, val zoom: Double)
 
+/** A parking option for the current destination. */
+data class TripItem(val place: ParkingPlace, val status: FitStatus, val walkMeters: Double)
+
+enum class TripAdvice {
+    /** Automatic search is off and you haven't asked yet. */
+    NOT_SEARCHED,
+    SEARCHING,
+    /** You're already close enough to walk. */
+    WALKABLE,
+    /** The destination has its own parking. */
+    ON_SITE,
+    FOUND,
+    NONE,
+}
+
+data class TripSummary(
+    val advice: TripAdvice,
+    val youToDestMeters: Double? = null,
+    val onSite: TripItem? = null,
+)
+
+data class RouteUi(val placeId: String, val points: List<Pair<Double, Double>>, val meters: Double, val seconds: Double)
+
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val ctx: Application get() = getApplication()
 
@@ -60,6 +90,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val active: StateFlow<ParkingSession?> = ParkStore.active
     val favorites: StateFlow<List<ParkingPlace>> = ParkStore.favorites
     val history: StateFlow<List<ParkingSession>> = ParkStore.history
+    val recents: StateFlow<List<Destination>> = ParkStore.recents
 
     private val _places = MutableStateFlow<List<ParkingPlace>>(emptyList())
     private val _filters = MutableStateFlow(Filters())
@@ -92,11 +123,64 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _tab = MutableStateFlow(AppTab.MAP)
     val tab: StateFlow<AppTab> = _tab.asStateFlow()
 
-    private val _geoResults = MutableStateFlow<List<GeoResult>>(emptyList())
-    val geoResults: StateFlow<List<GeoResult>> = _geoResults.asStateFlow()
-
     private val _focus = MutableStateFlow<MapFocus?>(null)
     val focus: StateFlow<MapFocus?> = _focus.asStateFlow()
+
+    /** Points the map should zoom to fit (destination plus the nearest parking). */
+    private val _fit = MutableStateFlow<List<Pair<Double, Double>>?>(null)
+    val fit: StateFlow<List<Pair<Double, Double>>?> = _fit.asStateFlow()
+
+    // ---- Destination ("Where to?") ----
+
+    private val _destination = MutableStateFlow<Destination?>(null)
+    val destination: StateFlow<Destination?> = _destination.asStateFlow()
+
+    private val _searchedDest = MutableStateFlow(false)
+    private val _tripRadius = MutableStateFlow(0)
+    val tripRadius: StateFlow<Int> = _tripRadius.asStateFlow()
+
+    private val _sheetExpanded = MutableStateFlow(true)
+    val sheetExpanded: StateFlow<Boolean> = _sheetExpanded.asStateFlow()
+
+    private val _suggestions = MutableStateFlow<List<Destination>>(emptyList())
+    val suggestions: StateFlow<List<Destination>> = _suggestions.asStateFlow()
+
+    private val _userLoc = MutableStateFlow<Pair<Double, Double>?>(null)
+    private var userLocAt = 0L
+
+    private val _route = MutableStateFlow<RouteUi?>(null)
+    val route: StateFlow<RouteUi?> = _route.asStateFlow()
+
+    private val _routeLoading = MutableStateFlow(false)
+    val routeLoading: StateFlow<Boolean> = _routeLoading.asStateFlow()
+
+    val tripItems: StateFlow<List<TripItem>> =
+        combine(visiblePlaces, _destination) { list, dest ->
+            if (dest == null) {
+                emptyList()
+            } else {
+                list.map { (p, status) -> TripItem(p, status, distanceMeters(dest.lat, dest.lon, p.lat, p.lon)) }
+                    .sortedWith(compareBy<TripItem>({ it.status == FitStatus.TOO_LOW }, { it.walkMeters }))
+            }
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val tripSummary: StateFlow<TripSummary?> =
+        combine(_destination, tripItems, _userLoc, _loading, _searchedDest) { dest, items, me, loading, searched ->
+            if (dest == null) return@combine null
+            val youToDest = me?.let { distanceMeters(it.first, it.second, dest.lat, dest.lon) }
+            val onSite = items.firstOrNull {
+                it.walkMeters <= ON_SITE_METERS && it.status != FitStatus.TOO_LOW && it.place.kind != ParkingKind.STREET
+            }
+            val advice = when {
+                !searched -> TripAdvice.NOT_SEARCHED
+                loading -> TripAdvice.SEARCHING
+                youToDest != null && youToDest <= WALKABLE_METERS -> TripAdvice.WALKABLE
+                onSite != null -> TripAdvice.ON_SITE
+                items.isEmpty() -> TripAdvice.NONE
+                else -> TripAdvice.FOUND
+            }
+            TripSummary(advice, youToDest, onSite)
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     // Remembered map camera, so switching tabs doesn't reset the map.
     var cameraLat = 39.5
@@ -105,6 +189,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var hasAutoCentered = false
 
     private var searchSeq = 0
+    private var suggestJob: Job? = null
+    private var routeJob: Job? = null
+    private var lastQuery = ""
 
     fun setTab(tab: AppTab) {
         _tab.value = tab
@@ -122,10 +209,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _filters.value = f
     }
 
-    fun select(place: ParkingPlace?) {
-        _selected.value = place
-    }
-
     fun saveCamera(lat: Double, lon: Double, zoom: Double) {
         cameraLat = lat
         cameraLon = lon
@@ -136,6 +219,40 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _focus.value = null
     }
 
+    fun consumeFit() {
+        _fit.value = null
+    }
+
+    fun toggleSheet() {
+        _sheetExpanded.update { !it }
+    }
+
+    /** Selects a parking place and loads the driving route to it. */
+    fun select(place: ParkingPlace?) {
+        _selected.value = place
+        routeJob?.cancel()
+        _route.value = null
+        _routeLoading.value = false
+        if (place == null) return
+        routeJob = viewModelScope.launch {
+            val me = userLocation() ?: return@launch
+            if (distanceMeters(me.first, me.second, place.lat, place.lon) < 150) return@launch
+            _routeLoading.value = true
+            try {
+                val r = RouteApi.drive(me.first, me.second, place.lat, place.lon)
+                if (r != null && _selected.value?.id == place.id) {
+                    _route.value = RouteUi(place.id, r.points, r.meters, r.seconds)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // No route line; the rest of the card still works.
+            } finally {
+                if (_selected.value?.id == place.id) _routeLoading.value = false
+            }
+        }
+    }
+
     fun searchArea(lat: Double, lon: Double) {
         val seq = ++searchSeq
         viewModelScope.launch {
@@ -144,7 +261,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val results = OverpassApi.nearby(lat, lon, settings.value.radiusMeters)
                 if (seq != searchSeq) return@launch
                 _places.value = results
-                _selected.value = null
+                select(null)
                 if (results.isEmpty()) toast("No parking mapped here. Try a bigger search radius in Settings.")
             } catch (e: CancellationException) {
                 throw e
@@ -156,12 +273,52 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun searchPlace(query: String) {
+    // ---- Search box ----
+
+    /** Live suggestions while typing, biased toward where the map is looking. */
+    fun onQueryChange(text: String, biasLat: Double, biasLon: Double) {
+        lastQuery = text
+        suggestJob?.cancel()
+        val q = text.trim()
+        if (q.length < 3) {
+            _suggestions.value = emptyList()
+            return
+        }
+        suggestJob = viewModelScope.launch {
+            delay(350)
+            try {
+                val results = Geo.suggest(q, biasLat, biasLon)
+                if (lastQuery == text) _suggestions.value = results
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Quietly keep the old suggestions; pressing Search tries again.
+            }
+        }
+    }
+
+    /** Keyboard Search button: take the top suggestion, or run a full search. */
+    fun submitQuery(text: String, biasLat: Double, biasLon: Double) {
+        val q = text.trim()
+        if (q.isEmpty()) return
+        val pending = suggestJob?.isActive == true
+        val first = _suggestions.value.firstOrNull()
+        if (!pending && first != null && lastQuery == text) {
+            pickDestination(first)
+            return
+        }
+        suggestJob?.cancel()
         viewModelScope.launch {
             try {
-                val results = Geo.search(query, cameraLat, cameraLon)
-                _geoResults.value = results
-                if (results.isEmpty()) toast("No places found for \"$query\"")
+                val results = Geo.search(q, biasLat, biasLon)
+                when {
+                    results.isEmpty() -> toast("No places found for \"$q\"")
+                    results.size == 1 -> pickDestination(results[0])
+                    else -> {
+                        lastQuery = text
+                        _suggestions.value = results
+                    }
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -170,15 +327,116 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun clearGeoResults() {
-        _geoResults.value = emptyList()
+    fun clearRecents() = ParkStore.clearRecents()
+
+    // ---- Trip ----
+
+    fun pickDestination(d: Destination, remember: Boolean = true) {
+        suggestJob?.cancel()
+        _suggestions.value = emptyList()
+        lastQuery = d.title
+        if (remember) ParkStore.addRecent(d)
+        searchSeq++
+        _loading.value = false
+        _places.value = emptyList()
+        _searchedDest.value = false
+        _sheetExpanded.value = true
+        _destination.value = d
+        select(null)
+        _tab.value = AppTab.MAP
+        hasAutoCentered = true
+        _focus.value = MapFocus(d.lat, d.lon, 16.0)
+        viewModelScope.launch { userLocation() }
+        if (settings.value.autoFindParking) findParkingNearDestination()
     }
 
-    fun pickGeo(result: GeoResult) {
-        _geoResults.value = emptyList()
-        hasAutoCentered = true
-        _focus.value = MapFocus(result.lat, result.lon, 16.0)
-        searchArea(result.lat, result.lon)
+    /** Long-press on the map: use that point as the destination. */
+    fun dropPin(lat: Double, lon: Double) {
+        val pin = Destination("Dropped pin", Format.latLon(lat, lon), lat, lon)
+        pickDestination(pin, remember = false)
+        viewModelScope.launch {
+            val address = Geo.reverse(ctx, lat, lon) ?: return@launch
+            if (_destination.value == pin) _destination.value = pin.copy(subtitle = address)
+        }
+    }
+
+    fun clearDestination() {
+        suggestJob?.cancel()
+        _suggestions.value = emptyList()
+        lastQuery = ""
+        searchSeq++
+        _loading.value = false
+        _destination.value = null
+        _searchedDest.value = false
+        _places.value = emptyList()
+        select(null)
+    }
+
+    /** Looks for parking around the destination, widening the search if there's very little. */
+    fun findParkingNearDestination() {
+        val dest = _destination.value ?: return
+        _searchedDest.value = true
+        val seq = ++searchSeq
+        viewModelScope.launch {
+            _loading.value = true
+            try {
+                val s = settings.value
+                var radius = s.walkRadiusMeters
+                var results = OverpassApi.nearby(dest.lat, dest.lon, radius)
+                val fitting = results.count { Clearance.fitStatus(it, s) != FitStatus.TOO_LOW }
+                if (fitting < 3 && radius < MAX_TRIP_RADIUS) {
+                    radius = (radius * 2).coerceAtMost(MAX_TRIP_RADIUS)
+                    results = OverpassApi.nearby(dest.lat, dest.lon, radius)
+                }
+                if (seq != searchSeq) return@launch
+                _tripRadius.value = radius
+                _places.value = results
+                select(null)
+                requestFit(dest, results)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (seq == searchSeq) {
+                    _searchedDest.value = false
+                    toast("Couldn't load parking near ${dest.title}: ${e.message ?: "network error"}")
+                }
+            } finally {
+                if (seq == searchSeq) _loading.value = false
+            }
+        }
+    }
+
+    private fun requestFit(dest: Destination, results: List<ParkingPlace>) {
+        val s = settings.value
+        val f = _filters.value
+        val nearest = results
+            .filter { !f.fitsOnly || Clearance.fitStatus(it, s) != FitStatus.TOO_LOW }
+            .sortedBy { distanceMeters(dest.lat, dest.lon, it.lat, it.lon) }
+            .take(5)
+        _fit.value = listOf(dest.lat to dest.lon) + nearest.map { it.lat to it.lon }
+    }
+
+    /** Start driving to a parking place (in Google Maps). */
+    fun go(place: ParkingPlace) {
+        _destination.value?.let { ParkStore.setTrip(it) }
+        Nav.navigate(ctx, place.lat, place.lon, walking = false)
+    }
+
+    /** Skip parking and drive straight to the destination. */
+    fun driveToDestination() {
+        val dest = _destination.value ?: return
+        ParkStore.setTrip(dest)
+        Nav.navigate(ctx, dest.lat, dest.lon, walking = false)
+    }
+
+    private suspend fun userLocation(): Pair<Double, Double>? {
+        val cached = _userLoc.value
+        if (cached != null && System.currentTimeMillis() - userLocAt < 60_000L) return cached
+        val loc = LocationHelper.quick(ctx) ?: return cached
+        val point = loc.latitude to loc.longitude
+        _userLoc.value = point
+        userLocAt = System.currentTimeMillis()
+        return point
     }
 
     fun showOnMap(lat: Double, lon: Double) {
@@ -190,22 +448,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Opens a saved favorite on the map with its details card. */
     fun showPlace(place: ParkingPlace) {
         if (_places.value.none { it.id == place.id }) _places.value = _places.value + place
-        _selected.value = place
+        select(place)
         showOnMap(place.lat, place.lon)
     }
 
     fun parkHere() {
         _tab.value = AppTab.SPOT
         toast("Getting your location…")
+        val dest = _destination.value ?: ParkStore.currentTrip()
         viewModelScope.launch {
-            val session = ParkActions.parkHere(ctx)
+            val session = ParkActions.parkHere(ctx, dest)
             toast(if (session == null) "Couldn't get your location. Check that location is allowed for ParkPal." else "Spot saved")
         }
     }
 
     fun parkAtPlace(place: ParkingPlace) {
-        ParkActions.parkAt(ctx, place.lat, place.lon, place.name)
-        _selected.value = null
+        ParkActions.parkAt(ctx, place.lat, place.lon, place.name, _destination.value ?: ParkStore.currentTrip())
+        select(null)
         _tab.value = AppTab.SPOT
         toast("Saved ${place.name} as your spot")
     }
@@ -322,6 +581,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         installWhenAllowed = false
         _update.update { it.copy(needsPermission = false) }
         Updater.install(ctx, file)
+    }
+
+    companion object {
+        /** Parking this close to the destination counts as "on site". */
+        const val ON_SITE_METERS = 100.0
+        /** If you're this close already, walking is an option. */
+        const val WALKABLE_METERS = 800.0
+        const val MAX_TRIP_RADIUS = 1600
     }
 }
 

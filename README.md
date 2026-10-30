@@ -4,13 +4,14 @@ A personal Android parking app: find parking that fits your truck, save where yo
 
 ## Features
 
-- **Find parking map**: garages, lots and street parking from OpenStreetMap, colored by price and height fit. Search any address or "Search this area".
+- **Where to?**: search like Google Maps, with suggestions as you type, recent destinations, or long-press the map to drop a pin. ParkPal then finds parking around your destination on its own: closest walk first, widened automatically if there's little that fits, with "has its own parking" and "close enough to walk" hints. Tap a spot to see the drive route and time, then **Go** to navigate. Your saved spot remembers the destination, with a **Walk to** button.
+- **Find parking map**: garages, lots and street parking from OpenStreetMap, colored by price and height fit. "Search this area" works anywhere.
 - **Truck clearance filter**: set your vehicle height and a safety margin; garages that are too low are flagged or hidden, and covered garages with no listed height say "check the sign".
 - **Save my spot**: "I parked here" (GPS) or "Park here" on a garage, plus level/row, a note and a photo. Walk-back directions through Google Maps, and share your spot.
 - **Meter timer**: countdown in the notification shade, a reminder before it ends (5–30 min, your choice) and another when it runs out. Survives phone restarts.
 - **Pay hand-off**: one tap opens ParkMobile, SpotHero, PayByPhone or ParkWhiz (or the Play Store if it isn't installed).
 - **Home-screen widget**: where you parked, when the meter ends, and a Walk back button.
-- **Android Auto**: nearby parking that fits your vehicle on the car screen, with Navigate and Park here.
+- **Android Auto**: nearby parking that fits your vehicle on the car screen, plus **Search** for a destination (recents listed) to see parking near it, with Navigate and Park here.
 - **Favorites and history**.
 - **Dark mode** (system, light, dark, pure black). The launcher icon switches to a dark version too.
 
@@ -32,4 +33,4 @@ Sideloaded apps are hidden in Android Auto until you allow them:
 
 ## Data
 
-Map tiles and parking data © OpenStreetMap contributors (Overpass API, Nominatim). Data can be missing or out of date, so always check posted signs and height bars.
+Map tiles and parking data © OpenStreetMap contributors (Overpass API, Photon, Nominatim). Driving routes from the OSRM demo server. Data can be missing or out of date, so always check posted signs and height bars.

@@ -71,6 +71,8 @@ fun PlaceCard(
     onPark: () -> Unit,
     onFavorite: () -> Unit,
     onPay: (PayApp) -> Unit,
+    extraLines: List<Pair<ImageVector, String>> = emptyList(),
+    goLabel: String = "Navigate",
 ) {
     ElevatedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -107,6 +109,7 @@ fun PlaceCard(
                 }
             }
             HeightBanner(place, status, settings)
+            extraLines.forEach { (icon, text) -> InfoLine(icon, text) }
             place.openingHours?.let { InfoLine(Icons.Filled.Schedule, it) }
             place.operator?.let { InfoLine(Icons.Filled.Business, it) }
             if (place.access == "customers") InfoLine(Icons.Filled.Info, "Customers only")
@@ -114,7 +117,7 @@ fun PlaceCard(
                 Button(onClick = onNavigate, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Filled.Directions, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
-                    Text("Navigate")
+                    Text(goLabel)
                 }
                 OutlinedButton(onClick = onPark, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Filled.LocalParking, contentDescription = null)

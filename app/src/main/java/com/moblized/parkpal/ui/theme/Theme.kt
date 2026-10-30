@@ -13,6 +13,7 @@ object ParkColors {
     val Check = Color(0xFFF59E0B)
     val TooLow = Color(0xFFD32F2F)
     val Parked = Color(0xFF7C3AED)
+    val Destination = Color(0xFFEA4335)
 }
 
 private val LightColors = lightColorScheme(

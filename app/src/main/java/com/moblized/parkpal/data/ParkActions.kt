@@ -14,19 +14,35 @@ object ParkActions {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     /** Saves your current GPS position as the parking spot. Returns null if location isn't available. */
-    suspend fun parkHere(context: Context): ParkingSession? {
+    suspend fun parkHere(context: Context, destination: Destination? = ParkStore.currentTrip()): ParkingSession? {
         val loc = LocationHelper.current(context) ?: return null
-        return parkAt(context, loc.latitude, loc.longitude, placeName = null)
+        return parkAt(context, loc.latitude, loc.longitude, placeName = null, destination = destination)
     }
 
     /** Saves a spot at the given point (for example a garage picked on the map). */
-    fun parkAt(context: Context, lat: Double, lon: Double, placeName: String?): ParkingSession {
+    fun parkAt(
+        context: Context,
+        lat: Double,
+        lon: Double,
+        placeName: String?,
+        destination: Destination? = ParkStore.currentTrip(),
+    ): ParkingSession {
         val app = context.applicationContext
         if (ParkStore.active.value != null) ParkStore.endActive()
         MeterAlarms.cancel(app)
         val now = System.currentTimeMillis()
-        val session = ParkingSession(id = now, lat = lat, lon = lon, placeName = placeName, startedAt = now)
+        val session = ParkingSession(
+            id = now,
+            lat = lat,
+            lon = lon,
+            placeName = placeName,
+            startedAt = now,
+            destName = destination?.title,
+            destLat = destination?.lat,
+            destLon = destination?.lon,
+        )
         ParkStore.setActive(session)
+        ParkStore.setTrip(null)
         // Fill in the street address in the background.
         scope.launch {
             val address = Geo.reverse(app, lat, lon) ?: return@launch

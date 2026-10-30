@@ -4,6 +4,8 @@ import android.location.Location
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.ceil
+import kotlin.math.max
 import kotlin.math.roundToInt
 
 object Format {
@@ -41,6 +43,13 @@ object Format {
         else String.format(Locale.US, "%.1f mi", meters / 1609.344)
 
     fun latLon(lat: Double, lon: Double): String = String.format(Locale.US, "%.6f,%.6f", lat, lon)
+
+    /** Walking minutes for a straight-line distance (about 3 mph, plus a little for corners). */
+    fun walkMinutes(meters: Double): Int = max(1, ceil(meters * 1.2 / 80.0).toInt())
+
+    fun walk(meters: Double): String = "${walkMinutes(meters)} min walk"
+
+    fun driveTime(seconds: Double): String = duration(max(60_000L, (seconds * 1000).toLong()))
 }
 
 fun distanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {

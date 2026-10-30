@@ -23,6 +23,10 @@ data class AppSettings(
     val reminderLeadMin: Int = 10,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val payApp: String = "ParkMobile",
+    /** Look for parking as soon as you pick a destination. */
+    val autoFindParking: Boolean = true,
+    /** How far from the destination to look for parking. */
+    val walkRadiusMeters: Int = 800,
 )
 
 object SettingsStore {
@@ -43,6 +47,8 @@ object SettingsStore {
             reminderLeadMin = prefs.getInt("reminderLeadMin", d.reminderLeadMin),
             themeMode = enumOr(prefs.getString("themeMode", null), d.themeMode),
             payApp = prefs.getString("payApp", null) ?: d.payApp,
+            autoFindParking = prefs.getBoolean("autoFindParking", d.autoFindParking),
+            walkRadiusMeters = prefs.getInt("walkRadiusMeters", d.walkRadiusMeters),
         )
     }
 
@@ -59,6 +65,8 @@ object SettingsStore {
             .putInt("reminderLeadMin", s.reminderLeadMin)
             .putString("themeMode", s.themeMode.name)
             .putString("payApp", s.payApp)
+            .putBoolean("autoFindParking", s.autoFindParking)
+            .putInt("walkRadiusMeters", s.walkRadiusMeters)
             .apply()
     }
 }

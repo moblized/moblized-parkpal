@@ -2,6 +2,7 @@ package com.moblized.parkpal.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.moblized.parkpal.util.distanceMeters
 import com.moblized.parkpal.widget.WidgetRefresher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -15,7 +16,12 @@ object ParkStore {
     private const val KEY_ACTIVE = "active"
     private const val KEY_FAVORITES = "favorites"
     private const val KEY_HISTORY = "history"
+    private const val KEY_RECENTS = "recents"
+    private const val KEY_TRIP = "trip"
+    private const val KEY_TRIP_AT = "tripAt"
     private const val MAX_HISTORY = 100
+    private const val MAX_RECENTS = 8
+    private const val TRIP_TTL_MS = 4 * 60 * 60 * 1000L
 
     private lateinit var prefs: SharedPreferences
     private lateinit var appContext: Context
@@ -29,6 +35,9 @@ object ParkStore {
     private val _history = MutableStateFlow<List<ParkingSession>>(emptyList())
     val history: StateFlow<List<ParkingSession>> = _history.asStateFlow()
 
+    private val _recents = MutableStateFlow<List<Destination>>(emptyList())
+    val recents: StateFlow<List<Destination>> = _recents.asStateFlow()
+
     @Synchronized
     fun init(context: Context) {
         if (::prefs.isInitialized) return
@@ -39,6 +48,44 @@ object ParkStore {
         }
         _favorites.value = readList(KEY_FAVORITES) { ParkingPlace.fromJson(it) }
         _history.value = readList(KEY_HISTORY) { ParkingSession.fromJson(it) }
+        _recents.value = readList(KEY_RECENTS) { Destination.fromJson(it) }
+    }
+
+    @Synchronized
+    fun addRecent(d: Destination) {
+        val updated = (listOf(d) + _recents.value.filterNot { sameDestination(it, d) }).take(MAX_RECENTS)
+        _recents.value = updated
+        writeList(KEY_RECENTS, updated.map { it.toJson() })
+    }
+
+    @Synchronized
+    fun clearRecents() {
+        _recents.value = emptyList()
+        writeList(KEY_RECENTS, emptyList())
+    }
+
+    private fun sameDestination(a: Destination, b: Destination): Boolean =
+        a.title == b.title && distanceMeters(a.lat, a.lon, b.lat, b.lon) < 60
+
+    /** Remembers where you're headed, so the spot you save next can link to it. */
+    @Synchronized
+    fun setTrip(d: Destination?) {
+        val editor = prefs.edit()
+        if (d == null) {
+            editor.remove(KEY_TRIP).remove(KEY_TRIP_AT)
+        } else {
+            editor.putString(KEY_TRIP, d.toJson().toString()).putLong(KEY_TRIP_AT, System.currentTimeMillis())
+        }
+        editor.apply()
+    }
+
+    /** The destination you set out for in the last few hours, if any. */
+    fun currentTrip(): Destination? {
+        if (!::prefs.isInitialized) return null
+        val at = prefs.getLong(KEY_TRIP_AT, 0L)
+        if (System.currentTimeMillis() - at > TRIP_TTL_MS) return null
+        val raw = prefs.getString(KEY_TRIP, null) ?: return null
+        return runCatching { Destination.fromJson(JSONObject(raw)) }.getOrNull()
     }
 
     @Synchronized

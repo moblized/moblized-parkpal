@@ -63,6 +63,30 @@ data class ParkingPlace(
     }
 }
 
+/** A place you're going to (from search, recents or a dropped pin). */
+data class Destination(
+    val title: String,
+    val subtitle: String,
+    val lat: Double,
+    val lon: Double,
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("title", title)
+        put("subtitle", subtitle)
+        put("lat", lat)
+        put("lon", lon)
+    }
+
+    companion object {
+        fun fromJson(o: JSONObject) = Destination(
+            title = o.getString("title"),
+            subtitle = o.optString("subtitle", ""),
+            lat = o.getDouble("lat"),
+            lon = o.getDouble("lon"),
+        )
+    }
+}
+
 /** Where the car is parked (active) or was parked (history). */
 data class ParkingSession(
     val id: Long,
@@ -76,6 +100,10 @@ data class ParkingSession(
     val startedAt: Long,
     val meterEndsAt: Long? = null,
     val endedAt: Long? = null,
+    /** Where you were headed when you parked, so you can walk there. */
+    val destName: String? = null,
+    val destLat: Double? = null,
+    val destLon: Double? = null,
 ) {
     fun title(): String = placeName ?: address ?: "Saved spot"
 
@@ -91,6 +119,9 @@ data class ParkingSession(
         put("startedAt", startedAt)
         putOpt("meterEndsAt", meterEndsAt)
         putOpt("endedAt", endedAt)
+        putOpt("destName", destName)
+        putOpt("destLat", destLat)
+        putOpt("destLon", destLon)
     }
 
     companion object {
@@ -106,11 +137,12 @@ data class ParkingSession(
             startedAt = o.getLong("startedAt"),
             meterEndsAt = o.lng("meterEndsAt"),
             endedAt = o.lng("endedAt"),
+            destName = o.str("destName"),
+            destLat = o.dbl("destLat"),
+            destLon = o.dbl("destLon"),
         )
     }
 }
-
-data class GeoResult(val title: String, val subtitle: String, val lat: Double, val lon: Double)
 
 internal fun JSONObject.str(key: String): String? =
     if (has(key) && !isNull(key)) getString(key) else null

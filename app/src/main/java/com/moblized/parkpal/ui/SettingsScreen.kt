@@ -37,6 +37,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -101,12 +102,41 @@ fun SettingsScreen(vm: MainViewModel) {
             Hint("Garages count as a fit only with at least ${Format.ftIn(s.vehicleHeightIn + s.marginIn)} of clearance.")
         }
 
-        Section("Search radius") {
+        Section("Search this area radius") {
             ChoiceChips(
                 options = listOf(400 to "¼ mi", 800 to "½ mi", 1600 to "1 mi", 3200 to "2 mi"),
                 selected = s.radiusMeters,
                 onSelect = { r -> SettingsStore.update { it.copy(radiusMeters = r) } },
             )
+        }
+
+        Section("Destinations") {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable { SettingsStore.update { it.copy(autoFindParking = !it.autoFindParking) } },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Find parking automatically", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                Switch(
+                    checked = s.autoFindParking,
+                    onCheckedChange = { on -> SettingsStore.update { it.copy(autoFindParking = on) } },
+                )
+            }
+            Hint(
+                if (s.autoFindParking) {
+                    "When you pick where you're going, ParkPal looks for parking around it right away."
+                } else {
+                    "Pick a destination, then tap Find parking when you need it."
+                },
+            )
+            Text("Look for parking within:", style = MaterialTheme.typography.bodyMedium)
+            ChoiceChips(
+                options = listOf(400 to "¼ mi · 5 min walk", 800 to "½ mi · 10 min", 1600 to "1 mi · 20 min"),
+                selected = s.walkRadiusMeters,
+                onSelect = { r -> SettingsStore.update { it.copy(walkRadiusMeters = r) } },
+            )
+            Hint("If there's very little parking that fits, ParkPal looks a bit farther out.")
         }
 
         Section("Meter reminders") {
@@ -167,9 +197,11 @@ fun SettingsScreen(vm: MainViewModel) {
 
         Section("Android Auto") {
             Text(
-                "ParkPal shows nearby parking that fits your vehicle on your truck's screen, with directions and Park here.",
+                "ParkPal shows parking that fits your vehicle on your truck's screen. Tap Search to pick a destination " +
+                    "(your recent ones are listed) and see parking near it, with Navigate and Park here.",
                 style = MaterialTheme.typography.bodyMedium,
             )
+            Hint("Android Auto only lets you type while parked, so search before you set off or pick a recent destination.")
             Hint(
                 "Because it isn't from the Play Store, turn on Unknown sources once: open Android Auto settings, " +
                     "tap Version about 10 times to unlock developer settings, then use the ⋮ menu → Developer settings → Unknown sources.",

@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.DirectionsWalk
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.AlertDialog
@@ -69,6 +70,7 @@ import com.moblized.parkpal.ui.theme.ParkColors
 import com.moblized.parkpal.util.Format
 import com.moblized.parkpal.util.Nav
 import com.moblized.parkpal.util.PayApps
+import com.moblized.parkpal.util.distanceMeters
 import kotlinx.coroutines.delay
 import java.io.File
 import kotlin.math.roundToInt
@@ -161,6 +163,23 @@ private fun ActiveSpot(s: ParkingSession, settings: AppSettings, vm: MainViewMod
                 "Parked at ${Format.time(s.startedAt)} · ${Format.ago(now - s.startedAt)}",
                 style = MaterialTheme.typography.bodyMedium,
             )
+            val destName = s.destName
+            val destLat = s.destLat
+            val destLon = s.destLon
+            if (destName != null && destLat != null && destLon != null) {
+                FilledTonalButton(
+                    onClick = { Nav.navigate(ctx, destLat, destLon, walking = true) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Filled.Place, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "Walk to $destName · ${Format.walk(distanceMeters(s.lat, s.lon, destLat, destLon))}",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Button(onClick = { Nav.navigate(ctx, s.lat, s.lon, walking = true) }, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Filled.DirectionsWalk, contentDescription = null)
