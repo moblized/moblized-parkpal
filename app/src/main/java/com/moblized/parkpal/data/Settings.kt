@@ -29,6 +29,9 @@ data class AppSettings(
     val walkRadiusMeters: Int = 800,
     /** Optional free CARTO key for the nicer map style. Blank uses the standard OpenStreetMap map. */
     val cartoKey: String = "",
+    /** Your own ParkPal parking server (e.g. on TrueNAS). Blank uses the public servers. */
+    val serverUrl: String = "",
+    val serverToken: String = "",
 )
 
 object SettingsStore {
@@ -52,6 +55,8 @@ object SettingsStore {
             autoFindParking = prefs.getBoolean("autoFindParking", d.autoFindParking),
             walkRadiusMeters = prefs.getInt("walkRadiusMeters", d.walkRadiusMeters),
             cartoKey = prefs.getString("cartoKey", null) ?: d.cartoKey,
+            serverUrl = prefs.getString("serverUrl", null) ?: d.serverUrl,
+            serverToken = prefs.getString("serverToken", null) ?: d.serverToken,
         )
     }
 
@@ -71,6 +76,8 @@ object SettingsStore {
             .putBoolean("autoFindParking", s.autoFindParking)
             .putInt("walkRadiusMeters", s.walkRadiusMeters)
             .putString("cartoKey", s.cartoKey)
+            .putString("serverUrl", s.serverUrl)
+            .putString("serverToken", s.serverToken)
             .apply()
     }
 }

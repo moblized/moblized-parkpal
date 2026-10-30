@@ -17,22 +17,30 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -43,21 +51,29 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.moblized.parkpal.data.ParkStore
+import com.moblized.parkpal.data.ParkingServer
 import com.moblized.parkpal.data.SettingsStore
 import com.moblized.parkpal.data.ThemeMode
 import com.moblized.parkpal.timer.MeterAlarms
 import com.moblized.parkpal.util.Format
 import com.moblized.parkpal.util.PayApps
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
+import java.util.Locale
 
 @Composable
 fun SettingsScreen(vm: MainViewModel) {
@@ -177,6 +193,10 @@ fun SettingsScreen(vm: MainViewModel) {
             Hint("Used for the Pay button on meter notifications.")
         }
 
+        Section("Parking server") {
+            ParkingServerSettings(s.serverUrl, s.serverToken)
+        }
+
         Section("Map style") {
             var key by remember { mutableStateOf(s.cartoKey) }
             Text(
@@ -254,6 +274,104 @@ fun SettingsScreen(vm: MainViewModel) {
                     "so always check posted signs and height bars before you pull in.",
             )
         }
+    }
+}
+
+/** Address and token for your own ParkPal parking server, with a connection test. */
+@Composable
+private fun ParkingServerSettings(savedUrl: String, savedToken: String) {
+    var url by remember { mutableStateOf(savedUrl) }
+    var token by remember { mutableStateOf(savedToken) }
+    var showToken by remember { mutableStateOf(false) }
+    var testing by remember { mutableStateOf(false) }
+    var result by remember { mutableStateOf<String?>(null) }
+    var resultOk by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    Text(
+        if (savedUrl.isBlank()) {
+            "Not set up: using the free public servers, which are often overloaded."
+        } else {
+            "Using your server first, with the public servers as a backup."
+        },
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    Hint("Run the ParkPal parking server on your TrueNAS (see server/README.md in the GitHub repo) for fast, reliable parking.")
+    OutlinedTextField(
+        value = url,
+        onValueChange = { v ->
+            url = v
+            result = null
+            SettingsStore.update { it.copy(serverUrl = v.trim()) }
+        },
+        label = { Text("Server address") },
+        placeholder = { Text("parkpal.yourdomain.org") },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+        modifier = Modifier.fillMaxWidth(),
+    )
+    OutlinedTextField(
+        value = token,
+        onValueChange = { v ->
+            token = v
+            result = null
+            SettingsStore.update { it.copy(serverToken = v.trim()) }
+        },
+        label = { Text("Token") },
+        singleLine = true,
+        visualTransformation = if (showToken) VisualTransformation.None else PasswordVisualTransformation(),
+        trailingIcon = {
+            IconButton(onClick = { showToken = !showToken }) {
+                Icon(
+                    if (showToken) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                    contentDescription = if (showToken) "Hide token" else "Show token",
+                )
+            }
+        },
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        OutlinedButton(
+            enabled = url.isNotBlank() && !testing,
+            onClick = {
+                testing = true
+                result = null
+                scope.launch {
+                    try {
+                        val st = ParkingServer.status(url, token)
+                        resultOk = st.ready
+                        result = when {
+                            st.ready -> buildString {
+                                append("Connected: ").append(String.format(Locale.US, "%,d", st.places)).append(" parking places")
+                                st.updated?.let { append(", updated ").append(it.take(10)) }
+                                if (st.busy) append(". ").append(st.message)
+                            }
+                            else -> "Connected, but still preparing data: ${st.message}"
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        resultOk = false
+                        result = "Couldn't connect: ${e.message ?: "no answer"}"
+                    } finally {
+                        testing = false
+                    }
+                }
+            },
+        ) {
+            Text(if (testing) "Testing…" else "Test connection")
+        }
+        if (testing) {
+            Spacer(Modifier.width(12.dp))
+            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+        }
+    }
+    result?.let {
+        Text(
+            it,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (resultOk) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+        )
     }
 }
 

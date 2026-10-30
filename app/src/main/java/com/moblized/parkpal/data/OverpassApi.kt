@@ -37,7 +37,7 @@ object OverpassApi {
             "nwr[\"amenity\"=\"parking\"](around:$radiusMeters,${Format.latLon(lat, lon)});" +
             "out center qt 500;"
         val body = fetchHedged(query)
-        return withContext(Dispatchers.Default) { parse(body) }
+        return withContext(Dispatchers.Default) { parseElements(body) }
     }
 
     /**
@@ -113,7 +113,8 @@ object OverpassApi {
         return body
     }
 
-    private fun parse(json: String): List<ParkingPlace> {
+    /** Reads Overpass-style JSON. Your own ParkPal server answers in the same format. */
+    internal fun parseElements(json: String): List<ParkingPlace> {
         val elements = JSONObject(json).optJSONArray("elements") ?: return emptyList()
         val out = ArrayList<ParkingPlace>(elements.length())
         for (i in 0 until elements.length()) {

@@ -60,7 +60,7 @@ object ParkingRepo {
         val now = System.currentTimeMillis()
         if (cached == null || now - cached.savedAt > FRESH_MS) {
             try {
-                val fresh = OverpassApi.nearby(cLat, cLon, queryRadius)
+                val fresh = fetchFresh(cLat, cLon, queryRadius)
                 // Don't save an empty area: it's more likely a hiccup than truly no parking, so ask again next time.
                 if (fresh.isNotEmpty()) write(key, Entry(now, fresh))
                 if (cached == null || cached.places.map { it.id } != fresh.map { it.id }) {
@@ -74,6 +74,24 @@ object ParkingRepo {
             }
         }
     }.flowOn(Dispatchers.IO)
+
+    /**
+     * Your own parking server first (fast, no limits). If it isn't set up or can't be reached, the free
+     * public Overpass servers.
+     */
+    private suspend fun fetchFresh(lat: Double, lon: Double, radius: Int): List<ParkingPlace> {
+        val s = SettingsStore.settings.value
+        if (s.serverUrl.isNotBlank()) {
+            try {
+                return ParkingServer.nearby(s.serverUrl, s.serverToken, lat, lon, radius)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Server unreachable or still preparing: fall back to the public servers below.
+            }
+        }
+        return OverpassApi.nearby(lat, lon, radius)
+    }
 
     private fun snap(v: Double): Double = (v / GRID).roundToLong() * GRID
 
