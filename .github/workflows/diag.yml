@@ -1,0 +1,39 @@
+name: Parking data diagnostics
+
+on:
+  push:
+    branches: [diag]
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Query parking servers exactly like the app
+        run: |
+          places="40.758,-73.9855 41.8826,-87.6233 39.9612,-82.9988 33.4484,-112.0740"
+          servers="https://overpass-api.de/api/interpreter https://overpass.private.coffee/api/interpreter https://overpass.kumi.systems/api/interpreter"
+          for p in $places; do
+            q="[out:json][timeout:20];nwr[\"amenity\"=\"parking\"](around:1750,$p);out center qt 500;"
+            for s in $servers; do
+              start=$(date +%s.%N)
+              code=$(curl -sS -m 40 -o out.json -w "%{http_code}" -A "ParkPal/1.0 (personal Android app)" \
+                -H "Content-Type: application/x-www-form-urlencoded" --data-urlencode "data=$q" "$s" 2>err.txt || echo "ERR")
+              t=$(echo "$(date +%s.%N) - $start" | bc)
+              if [ "$code" = "200" ]; then
+                n=$(jq '[.elements[]? | select(.lat or .center)] | length' out.json 2>/dev/null || echo parse-fail)
+                nodes=$(jq '[.elements[]? | select(.type=="node")] | length' out.json 2>/dev/null)
+                remark=$(jq -r '.remark // ""' out.json 2>/dev/null | head -c 120)
+                echo "::notice::$p | $s | HTTP $code | ${t}s | usable=$n nodes=$nodes | $remark"
+              else
+                echo "::warning::$p | $s | HTTP $code | ${t}s | $(head -c 200 out.json 2>/dev/null | tr '\n' ' ') $(cat err.txt | tr '\n' ' ')"
+              fi
+            done
+          done
+      - name: Check other services the app uses
+        run: |
+          for u in "https://photon.komoot.io/api/?q=times%20square&limit=1" \
+                   "https://router.project-osrm.org/route/v1/driving/-73.9855,40.758;-73.98,40.75?overview=false" \
+                   "https://tile.openstreetmap.org/15/9647/12320.png"; do
+            code=$(curl -sS -m 20 -o /dev/null -w "%{http_code} %{time_total}s" -A "ParkPal/1.0 (personal Android app)" "$u" || echo ERR)
+            echo "::notice::$u | $code"
+          done
