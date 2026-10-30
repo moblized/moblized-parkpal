@@ -1,0 +1,8 @@
+HSPLcom/moblized/parkpal/**;->**(**)**
+Lcom/moblized/parkpal/**;
+HSPLorg/osmdroid/views/**;->**(**)**
+Lorg/osmdroid/views/**;
+HSPLorg/osmdroid/tileprovider/**;->**(**)**
+Lorg/osmdroid/tileprovider/**;
+HSPLorg/osmdroid/util/**;->**(**)**
+Lorg/osmdroid/util/**;

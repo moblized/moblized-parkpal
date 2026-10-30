@@ -1,6 +1,7 @@
 package com.moblized.parkpal.ui
 
 import android.app.Application
+import android.content.Context
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Map
@@ -15,8 +16,8 @@ import com.moblized.parkpal.data.Destination
 import com.moblized.parkpal.data.FeeInfo
 import com.moblized.parkpal.data.FitStatus
 import com.moblized.parkpal.data.Geo
-import com.moblized.parkpal.data.OverpassApi
 import com.moblized.parkpal.data.ParkActions
+import com.moblized.parkpal.data.ParkingRepo
 import com.moblized.parkpal.data.ParkStore
 import com.moblized.parkpal.data.ParkingKind
 import com.moblized.parkpal.data.ParkingPlace
@@ -173,7 +174,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             val advice = when {
                 !searched -> TripAdvice.NOT_SEARCHED
-                loading -> TripAdvice.SEARCHING
+                loading && items.isEmpty() -> TripAdvice.SEARCHING
                 youToDest != null && youToDest <= WALKABLE_METERS -> TripAdvice.WALKABLE
                 onSite != null -> TripAdvice.ON_SITE
                 items.isEmpty() -> TripAdvice.NONE
@@ -182,13 +183,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             TripSummary(advice, youToDest, onSite)
         }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-    // Remembered map camera, so switching tabs doesn't reset the map.
-    var cameraLat = 39.5
-    var cameraLon = -98.35
-    var cameraZoom = 4.0
+    // Remembered map camera, so the map opens where you left it instead of zoomed out over the country.
+    private val mapPrefs = app.getSharedPreferences("parkpal_map", Context.MODE_PRIVATE)
+    val hasSavedCamera: Boolean = mapPrefs.contains("lat")
+    var cameraLat = Double.fromBits(mapPrefs.getLong("lat", 39.5.toRawBits()))
+    var cameraLon = Double.fromBits(mapPrefs.getLong("lon", (-98.35).toRawBits()))
+    var cameraZoom = Double.fromBits(mapPrefs.getLong("zoom", 4.0.toRawBits()))
     var hasAutoCentered = false
 
+    private val _suggesting = MutableStateFlow(false)
+    val suggesting: StateFlow<Boolean> = _suggesting.asStateFlow()
+
     private var searchSeq = 0
+    private var searchJob: Job? = null
     private var suggestJob: Job? = null
     private var routeJob: Job? = null
     private var lastQuery = ""
@@ -213,6 +220,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         cameraLat = lat
         cameraLon = lon
         cameraZoom = zoom
+        mapPrefs.edit()
+            .putLong("lat", lat.toRawBits())
+            .putLong("lon", lon.toRawBits())
+            .putLong("zoom", zoom.toRawBits())
+            .apply()
     }
 
     fun consumeFocus() {
@@ -253,16 +265,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Parking around a point. Saved results show instantly; fresh ones replace them when they arrive. */
     fun searchArea(lat: Double, lon: Double) {
+        searchJob?.cancel()
         val seq = ++searchSeq
-        viewModelScope.launch {
+        select(null)
+        searchJob = viewModelScope.launch {
             _loading.value = true
             try {
-                val results = OverpassApi.nearby(lat, lon, settings.value.radiusMeters)
-                if (seq != searchSeq) return@launch
-                _places.value = results
-                select(null)
-                if (results.isEmpty()) toast("No parking mapped here. Try a bigger search radius in Settings.")
+                var any = false
+                ParkingRepo.nearby(lat, lon, settings.value.radiusMeters).collect { results ->
+                    if (seq != searchSeq) return@collect
+                    any = true
+                    _places.value = results
+                }
+                if (seq == searchSeq && (!any || _places.value.isEmpty())) {
+                    toast("No parking mapped here. Try a bigger search radius in Settings.")
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -279,13 +298,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun onQueryChange(text: String, biasLat: Double, biasLon: Double) {
         lastQuery = text
         suggestJob?.cancel()
+        _suggesting.value = false
         val q = text.trim()
         if (q.length < 3) {
             _suggestions.value = emptyList()
             return
         }
+        // Already looked this up (e.g. after a backspace): show it with no wait.
+        Geo.cachedSuggestions(q, biasLat, biasLon)?.let {
+            _suggestions.value = it
+            return
+        }
         suggestJob = viewModelScope.launch {
-            delay(350)
+            delay(250)
+            _suggesting.value = true
             try {
                 val results = Geo.suggest(q, biasLat, biasLon)
                 if (lastQuery == text) _suggestions.value = results
@@ -293,6 +319,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 throw e
             } catch (e: Exception) {
                 // Quietly keep the old suggestions; pressing Search tries again.
+            } finally {
+                if (lastQuery == text) _suggesting.value = false
             }
         }
     }
@@ -336,6 +364,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _suggestions.value = emptyList()
         lastQuery = d.title
         if (remember) ParkStore.addRecent(d)
+        searchJob?.cancel()
         searchSeq++
         _loading.value = false
         _places.value = emptyList()
@@ -363,7 +392,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun clearDestination() {
         suggestJob?.cancel()
         _suggestions.value = emptyList()
+        _suggesting.value = false
         lastQuery = ""
+        searchJob?.cancel()
         searchSeq++
         _loading.value = false
         _destination.value = null
@@ -372,27 +403,37 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         select(null)
     }
 
-    /** Looks for parking around the destination, widening the search if there's very little. */
+    /**
+     * Looks for parking around the destination. One search covers the wider area, then the list keeps to
+     * your walking distance if there's enough parking that fits, or widens if there isn't.
+     */
     fun findParkingNearDestination() {
         val dest = _destination.value ?: return
         _searchedDest.value = true
+        searchJob?.cancel()
         val seq = ++searchSeq
-        viewModelScope.launch {
+        searchJob = viewModelScope.launch {
             _loading.value = true
             try {
                 val s = settings.value
-                var radius = s.walkRadiusMeters
-                var results = OverpassApi.nearby(dest.lat, dest.lon, radius)
-                val fitting = results.count { Clearance.fitStatus(it, s) != FitStatus.TOO_LOW }
-                if (fitting < 3 && radius < MAX_TRIP_RADIUS) {
-                    radius = (radius * 2).coerceAtMost(MAX_TRIP_RADIUS)
-                    results = OverpassApi.nearby(dest.lat, dest.lon, radius)
+                val walk = s.walkRadiusMeters
+                val wide = (walk * 2).coerceIn(walk, MAX_TRIP_RADIUS)
+                var fitted = false
+                ParkingRepo.nearby(dest.lat, dest.lon, wide).collect { results ->
+                    if (seq != searchSeq) return@collect
+                    val withDistance = results.map { it to distanceMeters(dest.lat, dest.lon, it.lat, it.lon) }
+                    val fittingNear = withDistance.count { (p, d) ->
+                        d <= walk && Clearance.fitStatus(p, s) != FitStatus.TOO_LOW
+                    }
+                    val radius = if (fittingNear >= 3) walk else wide
+                    val inRange = withDistance.filter { it.second <= radius }.map { it.first }
+                    _tripRadius.value = radius
+                    _places.value = inRange
+                    if (!fitted) {
+                        fitted = true
+                        requestFit(dest, inRange)
+                    }
                 }
-                if (seq != searchSeq) return@launch
-                _tripRadius.value = radius
-                _places.value = results
-                select(null)
-                requestFit(dest, results)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

@@ -2,10 +2,18 @@
 
 package com.moblized.parkpal.ui
 
-import android.graphics.DashPathEffect
-import android.graphics.Paint
-import android.graphics.PathEffect
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -84,6 +92,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.moblized.parkpal.data.Clearance
 import com.moblized.parkpal.data.Destination
+import com.moblized.parkpal.data.ParkingPlace
 import com.moblized.parkpal.ui.theme.ParkColors
 import com.moblized.parkpal.util.Format
 import com.moblized.parkpal.util.LocationHelper
@@ -91,17 +100,15 @@ import com.moblized.parkpal.util.PayApps
 import com.moblized.parkpal.util.distanceMeters
 import kotlinx.coroutines.launch
 import org.osmdroid.events.MapEventsReceiver
-import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.CustomZoomButtonsController
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.MapEventsOverlay
-import org.osmdroid.views.overlay.Marker
-import org.osmdroid.views.overlay.Polyline
-import org.osmdroid.views.overlay.TilesOverlay
 import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
 import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
+
+private enum class BottomMode { PLACE, TRIP, AREA }
 
 @Composable
 fun MapScreen(vm: MainViewModel, dark: Boolean, hasLocation: Boolean) {
@@ -126,6 +133,7 @@ fun MapScreen(vm: MainViewModel, dark: Boolean, hasLocation: Boolean) {
     val route by vm.route.collectAsStateWithLifecycle()
     val routeLoading by vm.routeLoading.collectAsStateWithLifecycle()
     val suggestions by vm.suggestions.collectAsStateWithLifecycle()
+    val suggesting by vm.suggesting.collectAsStateWithLifecycle()
     val recents by vm.recents.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val icons = remember { MarkerIcons(ctx) }
@@ -135,13 +143,14 @@ fun MapScreen(vm: MainViewModel, dark: Boolean, hasLocation: Boolean) {
 
     val mapView = remember {
         MapView(ctx).apply {
-            setTileSource(TileSourceFactory.MAPNIK)
+            setTileSource(if (dark) MapTiles.dark else MapTiles.light)
             setMultiTouchControls(true)
             zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
             setDestroyMode(false)
             setTilesScaledToDpi(true)
             setMinZoomLevel(3.0)
             setMaxZoomLevel(20.0)
+            // Open where you left off, so the map is ready immediately.
             controller.setZoom(vm.cameraZoom)
             controller.setCenter(GeoPoint(vm.cameraLat, vm.cameraLon))
         }
@@ -167,6 +176,21 @@ fun MapScreen(vm: MainViewModel, dark: Boolean, hasLocation: Boolean) {
         }
         MapEventsOverlay(receiver).also { mapView.overlays.add(0, it) }
     }
+    val layers = remember {
+        MapLayers(
+            map = mapView,
+            icons = icons,
+            density = density,
+            onPlace = { vm.select(it) },
+            onParked = { vm.setTab(AppTab.SPOT) },
+            onDestination = { vm.select(null) },
+        )
+    }
+
+    LaunchedEffect(dark) {
+        val source = if (dark) MapTiles.dark else MapTiles.light
+        if (mapView.tileProvider.tileSource != source) mapView.setTileSource(source)
+    }
 
     // Keep the search box showing the destination's name.
     LaunchedEffect(destination) {
@@ -177,6 +201,10 @@ fun MapScreen(vm: MainViewModel, dark: Boolean, hasLocation: Boolean) {
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
+        fun saveCamera() {
+            val c = mapView.mapCenter
+            vm.saveCamera(c.latitude, c.longitude, mapView.zoomLevelDouble)
+        }
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_RESUME -> {
@@ -184,6 +212,7 @@ fun MapScreen(vm: MainViewModel, dark: Boolean, hasLocation: Boolean) {
                     if (LocationHelper.hasPermission(ctx)) myLocation.enableMyLocation()
                 }
                 Lifecycle.Event.ON_PAUSE -> {
+                    saveCamera()
                     myLocation.disableMyLocation()
                     mapView.onPause()
                 }
@@ -193,33 +222,43 @@ fun MapScreen(vm: MainViewModel, dark: Boolean, hasLocation: Boolean) {
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
-            val c = mapView.mapCenter
-            vm.saveCamera(c.latitude, c.longitude, mapView.zoomLevelDouble)
+            saveCamera()
             myLocation.disableMyLocation()
             mapView.onDetach()
         }
     }
 
-    // First time we have location: jump to it and look for parking nearby.
+    // On launch: jump to your last known position right away (no waiting for GPS), show parking there
+    // (instant if you've been there before), then correct once a fresh GPS fix arrives if you've moved.
     LaunchedEffect(hasLocation) {
         if (!hasLocation) return@LaunchedEffect
         myLocation.enableMyLocation()
-        if (!vm.hasAutoCentered) {
-            vm.hasAutoCentered = true
-            val loc = LocationHelper.current(ctx)
-            if (loc != null && vm.destination.value == null) {
+        if (vm.hasAutoCentered) return@LaunchedEffect
+        vm.hasAutoCentered = true
+        fun goTo(lat: Double, lon: Double) {
+            val target = GeoPoint(lat, lon)
+            if (vm.hasSavedCamera) {
+                mapView.controller.animateTo(target, 16.0, 600L)
+            } else {
                 mapView.controller.setZoom(16.0)
-                mapView.controller.setCenter(GeoPoint(loc.latitude, loc.longitude))
-                vm.searchArea(loc.latitude, loc.longitude)
+                mapView.controller.setCenter(target)
             }
+            vm.searchArea(lat, lon)
+        }
+        val last = LocationHelper.last(ctx)
+        if (last != null && vm.destination.value == null) goTo(last.latitude, last.longitude)
+        val stale = last == null || System.currentTimeMillis() - last.time > 5 * 60_000L
+        if (stale) {
+            val fresh = LocationHelper.current(ctx) ?: return@LaunchedEffect
+            val moved = last == null || distanceMeters(last.latitude, last.longitude, fresh.latitude, fresh.longitude) > 400
+            if (moved && vm.destination.value == null && vm.selected.value == null) goTo(fresh.latitude, fresh.longitude)
         }
     }
 
     LaunchedEffect(focus) {
         val f = focus ?: return@LaunchedEffect
-        mapView.controller.setZoom(f.zoom)
-        mapView.controller.setCenter(GeoPoint(f.lat, f.lon))
         vm.consumeFocus()
+        mapView.controller.animateTo(GeoPoint(f.lat, f.lon), f.zoom, 700L)
     }
 
     LaunchedEffect(fit) {
@@ -240,70 +279,12 @@ fun MapScreen(vm: MainViewModel, dark: Boolean, hasLocation: Boolean) {
         AndroidView(
             factory = { mapView },
             modifier = Modifier.fillMaxSize(),
-            update = { mv ->
-                mv.overlays.filter { it is Marker || it is Polyline }.forEach { mv.overlays.remove(it) }
+            update = { _ ->
                 val sel = selected
-                val dest = destination
-                val r = route
-                // Driving route to the selected parking, drawn with a casing so it stands out.
-                if (sel != null && r != null && r.placeId == sel.id && r.points.size > 1) {
-                    val pts = r.points.map { GeoPoint(it.first, it.second) }
-                    val casing = if (dark) 0xFF0B1220.toInt() else android.graphics.Color.WHITE
-                    val color = if (dark) 0xFF7FA2FF.toInt() else 0xFF1F4FD8.toInt()
-                    mv.overlays.add(line(mv, pts, casing, 10f * density, null))
-                    mv.overlays.add(line(mv, pts, color, 6f * density, null))
+                val selPair = sel?.let { s ->
+                    visible.firstOrNull { it.first.id == s.id } ?: (s to Clearance.fitStatus(s, settings))
                 }
-                // Dotted walking line from the parking to the destination.
-                if (sel != null && dest != null) {
-                    mv.overlays.add(
-                        line(
-                            mv,
-                            listOf(GeoPoint(sel.lat, sel.lon), GeoPoint(dest.lat, dest.lon)),
-                            0xFF6B7280.toInt(),
-                            4f * density,
-                            DashPathEffect(floatArrayOf(1f * density, 8f * density), 0f),
-                        ),
-                    )
-                }
-                val selectedId = sel?.id
-                visible.forEach { (place, status) ->
-                    val marker = Marker(mv)
-                    marker.position = GeoPoint(place.lat, place.lon)
-                    marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                    marker.icon = icons.forPlace(place, status, place.id == selectedId)
-                    marker.title = place.name
-                    marker.setOnMarkerClickListener { _, _ ->
-                        vm.select(place)
-                        true
-                    }
-                    mv.overlays.add(marker)
-                }
-                active?.let { spot ->
-                    val marker = Marker(mv)
-                    marker.position = GeoPoint(spot.lat, spot.lon)
-                    marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                    marker.icon = icons.parked()
-                    marker.title = "Your spot"
-                    marker.setOnMarkerClickListener { _, _ ->
-                        vm.setTab(AppTab.SPOT)
-                        true
-                    }
-                    mv.overlays.add(marker)
-                }
-                dest?.let { d ->
-                    val marker = Marker(mv)
-                    marker.position = GeoPoint(d.lat, d.lon)
-                    marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                    marker.icon = icons.destination()
-                    marker.title = d.title
-                    marker.setOnMarkerClickListener { _, _ ->
-                        vm.select(null)
-                        true
-                    }
-                    mv.overlays.add(marker)
-                }
-                mv.overlayManager.tilesOverlay.setColorFilter(if (dark) TilesOverlay.INVERT_COLORS else null)
-                mv.invalidate()
+                layers.sync(visible, selPair, route, destination, active, dark)
             },
         )
 
@@ -317,6 +298,7 @@ fun MapScreen(vm: MainViewModel, dark: Boolean, hasLocation: Boolean) {
             WhereToBar(
                 text = searchText,
                 hasDestination = destination != null,
+                busy = suggesting,
                 onTextChange = { t ->
                     searchText = t
                     val c = mapView.mapCenter
@@ -342,21 +324,33 @@ fun MapScreen(vm: MainViewModel, dark: Boolean, hasLocation: Boolean) {
             )
             val showSuggestions = searchFocused && searchText.trim().length >= 3 && suggestions.isNotEmpty()
             val showRecents = searchFocused && searchText.isBlank() && recents.isNotEmpty()
-            when {
-                showSuggestions -> PlaceList(suggestions, isRecent = false, onPick = vm::pickDestination, onClearRecents = null)
-                showRecents -> PlaceList(recents, isRecent = true, onPick = vm::pickDestination, onClearRecents = vm::clearRecents)
-                else -> {
-                    FilterRow(filters, settings.vehicleName, onChange = vm::setFilters)
-                    if (destination == null && total > 0) {
-                        Surface(
-                            shape = RoundedCornerShape(50),
-                            color = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.94f),
-                            shadowElevation = 2.dp,
-                        ) {
+            AnimatedVisibility(
+                visible = showSuggestions || showRecents,
+                enter = fadeIn(tween(150)) + expandVertically(tween(180)),
+                exit = fadeOut(tween(120)) + shrinkVertically(tween(150)),
+            ) {
+                if (showRecents) {
+                    PlaceList(recents, isRecent = true, onPick = vm::pickDestination, onClearRecents = vm::clearRecents)
+                } else {
+                    PlaceList(suggestions, isRecent = false, onPick = vm::pickDestination, onClearRecents = null)
+                }
+            }
+            if (!showSuggestions && !showRecents) {
+                FilterRow(filters, settings.vehicleName, onChange = vm::setFilters)
+                AnimatedVisibility(visible = destination == null && total > 0, enter = fadeIn(), exit = fadeOut()) {
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.94f),
+                        shadowElevation = 2.dp,
+                    ) {
+                        Row(Modifier.padding(horizontal = 10.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            if (loading) {
+                                CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp)
+                                Spacer(Modifier.width(6.dp))
+                            }
                             Text(
                                 text = if (visible.size == total) "$total places found" else "${visible.size} of $total shown · filters on",
                                 style = MaterialTheme.typography.labelMedium,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                             )
                         }
                     }
@@ -372,7 +366,9 @@ fun MapScreen(vm: MainViewModel, dark: Boolean, hasLocation: Boolean) {
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
-                if (destination == null && selected == null) Legend()
+                AnimatedVisibility(visible = destination == null && selected == null, enter = fadeIn(), exit = fadeOut()) {
+                    Legend()
+                }
                 Spacer(Modifier.weight(1f))
                 SmallFloatingActionButton(
                     onClick = {
@@ -381,7 +377,7 @@ fun MapScreen(vm: MainViewModel, dark: Boolean, hasLocation: Boolean) {
                             mapView.controller.animateTo(here)
                         } else {
                             scope.launch {
-                                val loc = LocationHelper.current(ctx)
+                                val loc = LocationHelper.quick(ctx)
                                 if (loc != null) {
                                     mapView.controller.animateTo(GeoPoint(loc.latitude, loc.longitude))
                                 } else {
@@ -395,97 +391,123 @@ fun MapScreen(vm: MainViewModel, dark: Boolean, hasLocation: Boolean) {
                     Icon(Icons.Filled.MyLocation, contentDescription = "My location")
                 }
             }
-            val sel = selected
-            val dest = destination
-            val summary = tripSummary
-            when {
-                sel != null -> {
-                    val status = Clearance.fitStatus(sel, settings)
-                    val distance = myLocation.myLocation?.let {
-                        Format.distance(distanceMeters(it.latitude, it.longitude, sel.lat, sel.lon))
-                    }
-                    val r = route
-                    val extra = buildList<Pair<ImageVector, String>> {
-                        if (dest != null) {
-                            val walk = distanceMeters(sel.lat, sel.lon, dest.lat, dest.lon)
-                            add(Icons.Filled.DirectionsWalk to "${Format.walk(walk)} to ${dest.title}")
+
+            // Remember the last shown values so cards can animate out after they're cleared.
+            val lastSel = remember { arrayOfNulls<ParkingPlace>(1) }
+            val lastDest = remember { arrayOfNulls<Destination>(1) }
+            val lastSummary = remember { arrayOfNulls<TripSummary>(1) }
+            selected?.let { lastSel[0] = it }
+            destination?.let { lastDest[0] = it }
+            tripSummary?.let { lastSummary[0] = it }
+
+            val mode = when {
+                selected != null -> BottomMode.PLACE
+                destination != null && tripSummary != null -> BottomMode.TRIP
+                else -> BottomMode.AREA
+            }
+            AnimatedContent(
+                targetState = mode,
+                modifier = Modifier.fillMaxWidth(),
+                contentAlignment = Alignment.BottomCenter,
+                transitionSpec = {
+                    (slideInVertically(tween(260)) { it / 4 } + fadeIn(tween(220))) togetherWith
+                        (slideOutVertically(tween(180)) { it / 4 } + fadeOut(tween(150))) using
+                        SizeTransform(clip = false)
+                },
+                label = "bottom card",
+            ) { m ->
+                when (m) {
+                    BottomMode.PLACE -> {
+                        val sel = selected ?: lastSel[0]
+                        if (sel != null) {
+                            val dest = destination
+                            val status = Clearance.fitStatus(sel, settings)
+                            val distance = myLocation.myLocation?.let {
+                                Format.distance(distanceMeters(it.latitude, it.longitude, sel.lat, sel.lon))
+                            }
+                            val r = route
+                            val extra = buildList<Pair<ImageVector, String>> {
+                                if (dest != null) {
+                                    val walk = distanceMeters(sel.lat, sel.lon, dest.lat, dest.lon)
+                                    add(Icons.Filled.DirectionsWalk to "${Format.walk(walk)} to ${dest.title}")
+                                }
+                                if (r != null && r.placeId == sel.id) {
+                                    add(Icons.Filled.DirectionsCar to "About ${Format.driveTime(r.seconds)} drive · ${Format.distance(r.meters)}")
+                                } else if (routeLoading) {
+                                    add(Icons.Filled.DirectionsCar to "Finding route…")
+                                }
+                            }
+                            PlaceCard(
+                                place = sel,
+                                status = status,
+                                settings = settings,
+                                isFavorite = favorites.any { it.id == sel.id },
+                                distance = distance,
+                                onClose = { vm.select(null) },
+                                onNavigate = { vm.go(sel) },
+                                onPark = { vm.parkAtPlace(sel) },
+                                onFavorite = { vm.toggleFavorite(sel) },
+                                onPay = { PayApps.open(ctx, it) },
+                                extraLines = extra,
+                                goLabel = "Go",
+                            )
                         }
-                        if (r != null && r.placeId == sel.id) {
-                            add(Icons.Filled.DirectionsCar to "About ${Format.driveTime(r.seconds)} drive · ${Format.distance(r.meters)}")
-                        } else if (routeLoading) {
-                            add(Icons.Filled.DirectionsCar to "Finding route…")
+                    }
+                    BottomMode.TRIP -> {
+                        val dest = destination ?: lastDest[0]
+                        val summary = tripSummary ?: lastSummary[0]
+                        if (dest != null && summary != null) {
+                            TripSheet(
+                                dest = dest,
+                                summary = summary,
+                                items = tripItems,
+                                radiusMeters = tripRadius,
+                                expanded = sheetExpanded,
+                                loading = loading,
+                                vehicleName = settings.vehicleName,
+                                onToggle = vm::toggleSheet,
+                                onSelect = { place -> vm.select(place) },
+                                onDrive = vm::driveToDestination,
+                                onFindParking = vm::findParkingNearDestination,
+                            )
                         }
                     }
-                    PlaceCard(
-                        place = sel,
-                        status = status,
-                        settings = settings,
-                        isFavorite = favorites.any { it.id == sel.id },
-                        distance = distance,
-                        onClose = { vm.select(null) },
-                        onNavigate = { vm.go(sel) },
-                        onPark = { vm.parkAtPlace(sel) },
-                        onFavorite = { vm.toggleFavorite(sel) },
-                        onPay = { PayApps.open(ctx, it) },
-                        extraLines = extra,
-                        goLabel = "Go",
-                    )
+                    BottomMode.AREA -> Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        ExtendedFloatingActionButton(
+                            onClick = {
+                                val c = mapView.mapCenter
+                                vm.searchArea(c.latitude, c.longitude)
+                            },
+                            icon = {
+                                if (loading) {
+                                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                                } else {
+                                    Icon(Icons.Filled.Search, contentDescription = null)
+                                }
+                            },
+                            text = { Text(if (loading) "Searching…" else "Search this area") },
+                        )
+                    }
                 }
-                dest != null && summary != null -> TripSheet(
-                    dest = dest,
-                    summary = summary,
-                    items = tripItems,
-                    radiusMeters = tripRadius,
-                    expanded = sheetExpanded,
-                    vehicleName = settings.vehicleName,
-                    onToggle = vm::toggleSheet,
-                    onSelect = { place -> vm.select(place) },
-                    onDrive = vm::driveToDestination,
-                    onFindParking = vm::findParkingNearDestination,
-                )
-                else -> ExtendedFloatingActionButton(
-                    onClick = {
-                        val c = mapView.mapCenter
-                        vm.searchArea(c.latitude, c.longitude)
-                    },
-                    icon = {
-                        if (loading) {
-                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                        } else {
-                            Icon(Icons.Filled.Search, contentDescription = null)
-                        }
-                    },
-                    text = { Text(if (loading) "Searching…" else "Search this area") },
-                    modifier = Modifier.align(Alignment.CenterHorizontally),
-                )
             }
         }
 
-        // OpenStreetMap requires this credit on the map.
+        // OpenStreetMap and CARTO require this credit on the map.
         Text(
-            text = "© OpenStreetMap contributors",
+            text = MapTiles.ATTRIBUTION,
             style = MaterialTheme.typography.labelSmall,
-            color = Color.DarkGray,
+            color = if (dark) Color.LightGray else Color.DarkGray,
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .padding(start = 4.dp, bottom = 2.dp)
-                .background(Color.White.copy(alpha = 0.75f), RoundedCornerShape(4.dp))
+                .background(
+                    if (dark) Color.Black.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.75f),
+                    RoundedCornerShape(4.dp),
+                )
                 .padding(horizontal = 4.dp),
         )
     }
 }
-
-private fun line(mv: MapView, pts: List<GeoPoint>, color: Int, width: Float, effect: PathEffect?): Polyline =
-    Polyline(mv).apply {
-        setPoints(pts)
-        outlinePaint.color = color
-        outlinePaint.strokeWidth = width
-        outlinePaint.strokeCap = Paint.Cap.ROUND
-        outlinePaint.strokeJoin = Paint.Join.ROUND
-        outlinePaint.isAntiAlias = true
-        outlinePaint.pathEffect = effect
-        setOnClickListener { _, _, _ -> true }
-    }
 
 /** Zooms so all points show, leaving room for the search bar on top and the list at the bottom. */
 private fun fitMap(mv: MapView, pts: List<Pair<Double, Double>>, density: Float) {
@@ -520,6 +542,7 @@ private fun fitMap(mv: MapView, pts: List<Pair<Double, Double>>, density: Float)
 private fun WhereToBar(
     text: String,
     hasDestination: Boolean,
+    busy: Boolean,
     onTextChange: (String) -> Unit,
     onSearch: () -> Unit,
     onBack: () -> Unit,
@@ -548,9 +571,12 @@ private fun WhereToBar(
                 }
             },
             trailingIcon = {
-                if (text.isNotEmpty()) {
-                    IconButton(onClick = onClear) {
-                        Icon(Icons.Filled.Close, contentDescription = "Clear")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    if (text.isNotEmpty()) {
+                        IconButton(onClick = onClear) {
+                            Icon(Icons.Filled.Close, contentDescription = "Clear")
+                        }
                     }
                 }
             },

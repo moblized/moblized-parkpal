@@ -18,16 +18,32 @@ import java.util.Locale
  * a full search falls back to Nominatim. Street addresses for saved spots use the phone's geocoder.
  */
 object Geo {
+    /** Recent suggestion results, so backspacing or retyping shows them instantly. */
+    private val suggestCache = object : LinkedHashMap<String, List<Destination>>(32, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<Destination>>?): Boolean = size > 60
+    }
+
+    private fun suggestKey(query: String, nearLat: Double?, nearLon: Double?, limit: Int): String =
+        String.format(Locale.US, "%s|%.2f|%.2f|%d", query.trim().lowercase(Locale.US), nearLat ?: 0.0, nearLon ?: 0.0, limit)
+
+    /** Suggestions already fetched for this text, or null. */
+    fun cachedSuggestions(query: String, nearLat: Double?, nearLon: Double?, limit: Int = 7): List<Destination>? =
+        synchronized(suggestCache) { suggestCache[suggestKey(query, nearLat, nearLon, limit)] }
+
     /** Suggestions while typing, biased toward the given point. */
-    suspend fun suggest(query: String, nearLat: Double?, nearLon: Double?, limit: Int = 7): List<Destination> =
-        withContext(Dispatchers.IO) {
+    suspend fun suggest(query: String, nearLat: Double?, nearLon: Double?, limit: Int = 7): List<Destination> {
+        cachedSuggestions(query, nearLat, nearLon, limit)?.let { return it }
+        val result = withContext(Dispatchers.IO) {
             val url = StringBuilder("https://photon.komoot.io/api/?lang=en&limit=$limit&q=")
-                .append(URLEncoder.encode(query, "UTF-8"))
+                .append(URLEncoder.encode(query.trim(), "UTF-8"))
             if (nearLat != null && nearLon != null) {
                 url.append(String.format(Locale.US, "&lat=%.5f&lon=%.5f", nearLat, nearLon))
             }
             parsePhoton(get(url.toString()))
         }
+        synchronized(suggestCache) { suggestCache[suggestKey(query, nearLat, nearLon, limit)] = result }
+        return result
+    }
 
     /** A full search when you press Search on the keyboard. */
     suspend fun search(query: String, nearLat: Double?, nearLon: Double?): List<Destination> {

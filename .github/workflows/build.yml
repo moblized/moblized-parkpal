@@ -21,14 +21,22 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Build APK
+      - name: Build optimized APK
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --stacktrace
+          set -o pipefail
+          ./gradlew assembleRelease --stacktrace 2>&1 | tee build.log
+
+      - name: Report build errors
+        if: failure()
+        run: |
+          grep -E "^e: |error:|ERROR:|What went wrong|Missing class|R8:" -A2 build.log | head -60 | while IFS= read -r line; do
+            echo "::error::$line"
+          done
 
       - name: Rename APK and write release notes
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk ParkPal.apk
+          cp app/build/outputs/apk/release/app-release.apk ParkPal.apk
           git log -1 --pretty=%s > notes.txt
 
       - uses: actions/upload-artifact@v4

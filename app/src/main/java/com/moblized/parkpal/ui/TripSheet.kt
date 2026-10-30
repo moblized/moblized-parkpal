@@ -1,7 +1,15 @@
 package com.moblized.parkpal.ui
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -58,6 +66,7 @@ fun TripSheet(
     items: List<TripItem>,
     radiusMeters: Int,
     expanded: Boolean,
+    loading: Boolean,
     vehicleName: String,
     onToggle: () -> Unit,
     onSelect: (ParkingPlace) -> Unit,
@@ -66,7 +75,9 @@ fun TripSheet(
 ) {
     ElevatedCard(Modifier.fillMaxWidth()) {
         Column(
-            Modifier.padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
+            Modifier
+                .animateContentSize(tween(220))
+                .padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(
@@ -101,6 +112,17 @@ fun TripSheet(
             }
 
             Advice(summary, items.size, radiusMeters, vehicleName)
+            if (loading && items.isNotEmpty()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "Updating…",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
 
             Row(Modifier.padding(end = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilledTonalButton(onClick = onDrive) {
@@ -117,7 +139,10 @@ fun TripSheet(
                 }
             }
 
-            if (expanded && items.isNotEmpty()) {
+            if (expanded && summary.advice == TripAdvice.SEARCHING) {
+                HorizontalDivider(Modifier.padding(end = 8.dp))
+                SkeletonRows()
+            } else if (expanded && items.isNotEmpty()) {
                 HorizontalDivider(Modifier.padding(end = 8.dp))
                 LazyColumn(Modifier.heightIn(max = 250.dp)) {
                     itemsIndexed(items, key = { _, item -> item.place.id }) { index, item ->
@@ -126,7 +151,9 @@ fun TripSheet(
                             index == 0 -> "Closest"
                             else -> null
                         }
-                        TripRow(item, tag) { onSelect(item.place) }
+                        Box(Modifier.animateItem()) {
+                            TripRow(item, tag) { onSelect(item.place) }
+                        }
                     }
                 }
             }
@@ -173,6 +200,31 @@ private fun Advice(summary: TripSummary, count: Int, radiusMeters: Int, vehicleN
             ParkColors.Check,
             "No parking mapped within ${Format.distance(radiusMeters.toDouble())}. Street parking may be available, so check the signs.",
         )
+    }
+}
+
+/** Gently pulsing placeholder rows while parking loads, so the sheet doesn't sit empty. */
+@Composable
+private fun SkeletonRows() {
+    val transition = rememberInfiniteTransition(label = "skeleton")
+    val pulse = transition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 0.85f,
+        animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
+        label = "pulse",
+    )
+    val shade = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+    Column(Modifier.graphicsLayer { alpha = pulse.value }) {
+        repeat(3) {
+            Row(Modifier.padding(vertical = 10.dp, horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(30.dp).clip(CircleShape).background(shade))
+                Spacer(Modifier.width(12.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Box(Modifier.width(150.dp).height(12.dp).clip(RoundedCornerShape(4.dp)).background(shade))
+                    Box(Modifier.width(210.dp).height(10.dp).clip(RoundedCornerShape(4.dp)).background(shade))
+                }
+            }
+        }
     }
 }
 

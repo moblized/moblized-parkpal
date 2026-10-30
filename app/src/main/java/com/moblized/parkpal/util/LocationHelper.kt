@@ -18,6 +18,19 @@ object LocationHelper {
         ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
             ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
+    /** The last known position, however old, without waiting for GPS. Null if there isn't one. */
+    @SuppressLint("MissingPermission")
+    suspend fun last(context: Context): Location? {
+        if (!hasPermission(context)) return null
+        return try {
+            LocationServices.getFusedLocationProviderClient(context).lastLocation.await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     /** The last known position if it's recent, otherwise a fresh fix. Faster than [current]. */
     @SuppressLint("MissingPermission")
     suspend fun quick(context: Context): Location? {

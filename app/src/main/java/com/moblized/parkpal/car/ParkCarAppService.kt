@@ -33,9 +33,9 @@ import com.moblized.parkpal.data.Destination
 import com.moblized.parkpal.data.FeeInfo
 import com.moblized.parkpal.data.FitStatus
 import com.moblized.parkpal.data.Geo
-import com.moblized.parkpal.data.OverpassApi
 import com.moblized.parkpal.data.ParkActions
 import com.moblized.parkpal.data.ParkStore
+import com.moblized.parkpal.data.ParkingRepo
 import com.moblized.parkpal.data.ParkingPlace
 import com.moblized.parkpal.data.SettingsStore
 import com.moblized.parkpal.util.Format
@@ -44,6 +44,7 @@ import com.moblized.parkpal.util.distanceMeters
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.last
 import kotlinx.coroutines.launch
 
 /** Android Auto: parking that fits your vehicle, near you or near where you're going. */
@@ -93,18 +94,18 @@ class NearbyParkingScreen(
                 originLon = loc.longitude
             }
             try {
-                var radius = if (destination != null) s.walkRadiusMeters else s.radiusMeters
-                var found = OverpassApi.nearby(originLat, originLon, radius)
+                val walk = s.walkRadiusMeters
+                val radius = if (destination != null) (walk * 2).coerceIn(walk, 1600) else s.radiusMeters
+                // Saved results come back instantly; only old ones wait for a refresh. One update per screen
+                // keeps Android Auto from counting extra screen changes.
+                var found = ParkingRepo.nearby(originLat, originLon, radius).last()
                     .filter { Clearance.fitStatus(it, s) != FitStatus.TOO_LOW }
-                if (destination != null && found.size < 3 && radius < 1600) {
-                    radius = (radius * 2).coerceAtMost(1600)
-                    found = OverpassApi.nearby(originLat, originLon, radius)
-                        .filter { Clearance.fitStatus(it, s) != FitStatus.TOO_LOW }
-                }
-                places = found
                     .map { it to distanceMeters(originLat, originLon, it.lat, it.lon) }
-                    .sortedBy { it.second }
-                    .take(6)
+                if (destination != null) {
+                    val near = found.filter { it.second <= walk }
+                    if (near.size >= 3) found = near
+                }
+                places = found.sortedBy { it.second }.take(6)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
