@@ -177,6 +177,16 @@ fun SettingsScreen(vm: MainViewModel) {
         }
 
         Section("About") {
+            val update by vm.update.collectAsStateWithLifecycle()
+            val newer = update.info
+            Text("ParkPal build ${vm.currentBuild}", style = MaterialTheme.typography.bodyLarge)
+            if (newer != null) {
+                OutlinedButton(onClick = vm::showUpdateDialog) { Text("Update to build ${newer.build}") }
+            } else {
+                OutlinedButton(onClick = { vm.checkForUpdate(manual = true) }, enabled = !update.checking) {
+                    Text(if (update.checking) "Checking…" else "Check for updates")
+                }
+            }
             Hint(
                 "Map and parking data © OpenStreetMap contributors. Data can be missing or out of date, " +
                     "so always check posted signs and height bars before you pull in.",

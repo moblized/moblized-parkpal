@@ -21,7 +21,10 @@ import com.moblized.parkpal.data.ParkStore
 import com.moblized.parkpal.data.ParkingPlace
 import com.moblized.parkpal.data.ParkingSession
 import com.moblized.parkpal.data.SettingsStore
+import com.moblized.parkpal.update.UpdateInfo
+import com.moblized.parkpal.update.Updater
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -29,7 +32,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.io.File
 
 enum class AppTab(val label: String, val icon: ImageVector) {
     MAP("Find", Icons.Filled.Map),
@@ -229,4 +234,104 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteHistory(id: Long) = ParkStore.deleteHistory(id)
 
     fun clearHistory() = ParkStore.clearHistory()
+
+    // ---- In-app updates ----
+
+    private val _update = MutableStateFlow(UpdateUi())
+    val update: StateFlow<UpdateUi> = _update.asStateFlow()
+    val currentBuild: Long by lazy { Updater.currentBuild(ctx) }
+    private var downloadJob: Job? = null
+    private var installWhenAllowed = false
+
+    /** Looks for a newer build. On launch it stays quiet; from Settings it reports "up to date" too. */
+    fun checkForUpdate(manual: Boolean) {
+        val state = _update.value
+        if (state.checking || state.progress != null) return
+        _update.update { it.copy(checking = true) }
+        viewModelScope.launch {
+            try {
+                val info = Updater.check(ctx)
+                when {
+                    info == null -> {
+                        _update.value = UpdateUi()
+                        if (manual) toast("ParkPal is up to date (build $currentBuild)")
+                    }
+                    !manual && Updater.isSkipped(ctx, info.build) ->
+                        _update.update { it.copy(checking = false, info = info) }
+                    else -> _update.update {
+                        it.copy(checking = false, info = info, showDialog = true, error = null)
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _update.update { it.copy(checking = false) }
+                if (manual) toast("Couldn't check for updates: ${e.message ?: "network error"}")
+            }
+        }
+    }
+
+    fun showUpdateDialog() {
+        if (_update.value.info != null) _update.update { it.copy(showDialog = true) }
+    }
+
+    fun startUpdate() {
+        val info = _update.value.info ?: return
+        val ready = _update.value.apk
+        if (ready != null && ready.exists()) {
+            installApk(ready)
+            return
+        }
+        if (downloadJob?.isActive == true) return
+        _update.update { it.copy(progress = 0f, error = null) }
+        downloadJob = viewModelScope.launch {
+            try {
+                val file = Updater.download(ctx, info) { p -> _update.update { it.copy(progress = p) } }
+                _update.update { it.copy(progress = null, apk = file) }
+                installApk(file)
+            } catch (e: CancellationException) {
+                _update.update { it.copy(progress = null) }
+                throw e
+            } catch (e: Exception) {
+                _update.update { it.copy(progress = null, error = "Download failed: ${e.message ?: "network error"}") }
+            }
+        }
+    }
+
+    fun dismissUpdate(skipThisBuild: Boolean) {
+        downloadJob?.cancel()
+        installWhenAllowed = false
+        val info = _update.value.info
+        if (skipThisBuild && info != null) Updater.skip(ctx, info.build)
+        _update.update { it.copy(showDialog = false, progress = null, needsPermission = false) }
+    }
+
+    /** Called when the app comes back to the front, e.g. after allowing installs in Settings. */
+    fun onAppResumed() {
+        val apk = _update.value.apk
+        if (installWhenAllowed && apk != null && Updater.canInstall(ctx)) installApk(apk)
+    }
+
+    private fun installApk(file: File) {
+        if (!Updater.canInstall(ctx)) {
+            installWhenAllowed = true
+            _update.update { it.copy(needsPermission = true) }
+            Updater.openInstallPermission(ctx)
+            return
+        }
+        installWhenAllowed = false
+        _update.update { it.copy(needsPermission = false) }
+        Updater.install(ctx, file)
+    }
 }
+
+data class UpdateUi(
+    val info: UpdateInfo? = null,
+    val showDialog: Boolean = false,
+    val checking: Boolean = false,
+    /** Download progress from 0 to 1, or null when not downloading. */
+    val progress: Float? = null,
+    val apk: File? = null,
+    val needsPermission: Boolean = false,
+    val error: String? = null,
+)

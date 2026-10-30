@@ -32,6 +32,7 @@ fun ParkPalRoot(vm: MainViewModel, dark: Boolean) {
     val ctx = LocalContext.current
     val tab by vm.tab.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
+    val update by vm.update.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var hasLocation by remember { mutableStateOf(LocationHelper.hasPermission(ctx)) }
 
@@ -82,5 +83,17 @@ fun ParkPalRoot(vm: MainViewModel, dark: Boolean) {
                 AppTab.SETTINGS -> SettingsScreen(vm)
             }
         }
+    }
+
+    val info = update.info
+    if (info != null && update.showDialog) {
+        UpdateDialog(
+            info = info,
+            state = update,
+            currentBuild = vm.currentBuild,
+            onUpdate = vm::startUpdate,
+            onLater = { vm.dismissUpdate(skipThisBuild = false) },
+            onSkip = { vm.dismissUpdate(skipThisBuild = true) },
+        )
     }
 }

@@ -26,7 +26,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        if (savedInstanceState == null) handleIntent(intent)
+        if (savedInstanceState == null) {
+            handleIntent(intent)
+            vm.checkForUpdate(manual = false)
+        }
         setContent {
             val settings by SettingsStore.settings.collectAsStateWithLifecycle()
             val systemDark = isSystemInDarkTheme()
@@ -52,6 +55,12 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleIntent(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Finish an update install if you just allowed ParkPal to install apps.
+        vm.onAppResumed()
     }
 
     override fun onStop() {

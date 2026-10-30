@@ -20,6 +20,8 @@ ParkPal doesn't sell or reserve spots itself; booking and paying still happen in
 
 Every push to `main` builds an APK with GitHub Actions. Open the repo's **Releases** page on your phone, download `ParkPal.apk` from the latest build and open it. New builds install over the old one.
 
+After that, ParkPal checks for new builds each time it opens and offers to download and install them (Settings → About → Check for updates does it on demand). The first time, Android asks you to allow ParkPal to install apps. The release notes in the prompt come from the commit message.
+
 ## Android Auto
 
 Sideloaded apps are hidden in Android Auto until you allow them:
