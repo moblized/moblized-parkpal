@@ -177,6 +177,36 @@ fun SettingsScreen(vm: MainViewModel) {
             Hint("Used for the Pay button on meter notifications.")
         }
 
+        Section("Map style") {
+            var key by remember { mutableStateOf(s.cartoKey) }
+            Text(
+                if (s.cartoKey.isBlank()) "Using the standard OpenStreetMap map." else "Using the CARTO map style.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Hint(
+                "For a cleaner, Google Maps-like style with a real dark map, paste a free CARTO key here. " +
+                    "It's free for personal use: request it on CARTO's site and it arrives by email. Leave blank for the standard map.",
+            )
+            OutlinedTextField(
+                value = key,
+                onValueChange = { v ->
+                    key = v
+                    SettingsStore.update { it.copy(cartoKey = v.trim()) }
+                },
+                label = { Text("CARTO key (optional)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedButton(onClick = {
+                ctx.startActivity(
+                    Intent(Intent.ACTION_VIEW, Uri.parse(MapTiles.CARTO_KEY_URL)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            }) {
+                Text("Get a free key")
+            }
+            Hint("If the map shows \"API key required\", the key is missing or wrong. Clear the box to go back to the standard map.")
+        }
+
         Section("Appearance") {
             ThemeMode.entries.forEach { mode ->
                 Row(

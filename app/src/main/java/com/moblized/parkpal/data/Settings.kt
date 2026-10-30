@@ -27,6 +27,8 @@ data class AppSettings(
     val autoFindParking: Boolean = true,
     /** How far from the destination to look for parking. */
     val walkRadiusMeters: Int = 800,
+    /** Optional free CARTO key for the nicer map style. Blank uses the standard OpenStreetMap map. */
+    val cartoKey: String = "",
 )
 
 object SettingsStore {
@@ -49,6 +51,7 @@ object SettingsStore {
             payApp = prefs.getString("payApp", null) ?: d.payApp,
             autoFindParking = prefs.getBoolean("autoFindParking", d.autoFindParking),
             walkRadiusMeters = prefs.getInt("walkRadiusMeters", d.walkRadiusMeters),
+            cartoKey = prefs.getString("cartoKey", null) ?: d.cartoKey,
         )
     }
 
@@ -67,6 +70,7 @@ object SettingsStore {
             .putString("payApp", s.payApp)
             .putBoolean("autoFindParking", s.autoFindParking)
             .putInt("walkRadiusMeters", s.walkRadiusMeters)
+            .putString("cartoKey", s.cartoKey)
             .apply()
     }
 }

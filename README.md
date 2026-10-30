@@ -33,10 +33,10 @@ Sideloaded apps are hidden in Android Auto until you allow them:
 
 ## Data
 
-Parking data © OpenStreetMap contributors (Overpass API, Photon, Nominatim). Map tiles © CARTO, map data © OpenStreetMap contributors. Driving routes from the OSRM demo server.
+Parking data © OpenStreetMap contributors (Overpass API, Photon, Nominatim). The map uses standard OpenStreetMap tiles; with an optional free CARTO key (Settings → Map style) it uses CARTO's Voyager and Dark Matter styles instead. Driving routes from the OSRM demo server.
 
 ## Speed
 
 - The installed APK is an optimized release build (R8 + startup profile).
 - Parking results are saved on the phone for a few days, so areas you've seen load instantly; three Overpass servers are tried in parallel when one is slow.
-- Map tiles come from a CDN and are kept for two weeks. The map opens where you left it. Data can be missing or out of date, so always check posted signs and height bars.
+- Map tiles are kept for two weeks, so places you've seen draw instantly. The map opens where you left it. Data can be missing or out of date, so always check posted signs and height bars.

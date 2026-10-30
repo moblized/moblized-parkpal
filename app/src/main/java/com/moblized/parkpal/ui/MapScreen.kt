@@ -105,6 +105,7 @@ import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.CustomZoomButtonsController
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.MapEventsOverlay
+import org.osmdroid.views.overlay.TilesOverlay
 import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
 import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
 
@@ -141,9 +142,10 @@ fun MapScreen(vm: MainViewModel, dark: Boolean, hasLocation: Boolean) {
     var searchText by rememberSaveable { mutableStateOf("") }
     var searchFocused by remember { mutableStateOf(false) }
 
+    val cartoKey = settings.cartoKey.trim()
     val mapView = remember {
         MapView(ctx).apply {
-            setTileSource(if (dark) MapTiles.dark else MapTiles.light)
+            setTileSource(MapTiles.source(dark, cartoKey))
             setMultiTouchControls(true)
             zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
             setDestroyMode(false)
@@ -187,9 +189,12 @@ fun MapScreen(vm: MainViewModel, dark: Boolean, hasLocation: Boolean) {
         )
     }
 
-    LaunchedEffect(dark) {
-        val source = if (dark) MapTiles.dark else MapTiles.light
+    LaunchedEffect(dark, cartoKey) {
+        val source = MapTiles.source(dark, cartoKey)
         if (mapView.tileProvider.tileSource != source) mapView.setTileSource(source)
+        val invert = dark && MapTiles.invertInDarkMode(cartoKey)
+        mapView.overlayManager.tilesOverlay.setColorFilter(if (invert) TilesOverlay.INVERT_COLORS else null)
+        mapView.invalidate()
     }
 
     // Keep the search box showing the destination's name.
@@ -492,9 +497,9 @@ fun MapScreen(vm: MainViewModel, dark: Boolean, hasLocation: Boolean) {
             }
         }
 
-        // OpenStreetMap and CARTO require this credit on the map.
+        // The map providers require this credit on the map.
         Text(
-            text = MapTiles.ATTRIBUTION,
+            text = MapTiles.attribution(cartoKey),
             style = MaterialTheme.typography.labelSmall,
             color = if (dark) Color.LightGray else Color.DarkGray,
             modifier = Modifier
