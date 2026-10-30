@@ -3,6 +3,13 @@ name: Build APK
 on:
   push:
     branches: [main]
+    # Only app changes make a new APK (and an update prompt); server-only changes don't.
+    paths-ignore:
+      - "server/**"
+      - "README.md"
+      - ".github/workflows/server.yml"
+      - ".github/workflows/diag.yml"
+      - ".github/workflows/build.yml"
   workflow_dispatch:
 
 permissions:

@@ -1,0 +1,55 @@
+name: Parking server test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "server/**"
+      - ".github/workflows/server.yml"
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the same tools the TrueNAS container uses
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q osmium-tool
+          pip install -q osmium
+
+      - name: Build parking data from a real extract (Washington DC)
+        env:
+          DATA_DIR: ${{ runner.temp }}/parkpal
+          REGIONS: north-america/us/district-of-columbia
+        run: |
+          start=$(date +%s)
+          python -u server/parkpal_server.py --build-once | tee build.log
+          echo "::notice::Built DC parking data in $(( $(date +%s) - start ))s: $(tail -1 build.log)"
+
+      - name: Run the server and query it like the app
+        env:
+          DATA_DIR: ${{ runner.temp }}/parkpal
+          REGIONS: north-america/us/district-of-columbia
+          PARKPAL_TOKEN: test-token
+          PORT: "8099"
+        run: |
+          python -u server/parkpal_server.py > server.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf localhost:8099/health >/dev/null && break; sleep 1; done
+          code=$(curl -s -o /dev/null -w "%{http_code}" "localhost:8099/api/parking?lat=38.8973&lon=-77.0063")
+          echo "::notice::Without token: HTTP $code (should be 401)"
+          test "$code" = "401"
+          q="localhost:8099/api/parking?lat=38.8973&lon=-77.0063&radius=1000"
+          t=$(curl -s -o result.json -w "%{time_total}" -H "X-ParkPal-Token: test-token" -H "Accept-Encoding: gzip" --compressed "$q")
+          n=$(jq '.elements | length' result.json)
+          with_height=$(jq '[.elements[] | select(.tags.maxheight)] | length' result.json)
+          echo "::notice::Parking within 1 km of Union Station: $n places ($with_height with height limits) in ${t}s"
+          echo "::notice::Closest: $(jq -c '.elements[0]' result.json)"
+          test "$n" -gt 0
+          grep "parking " server.log | tail -2 | while read -r l; do echo "::notice::$l"; done

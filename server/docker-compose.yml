@@ -1,0 +1,41 @@
+# ParkPal parking server for TrueNAS SCALE (Apps → Discover Apps → ⋮ → Install via YAML).
+#
+# Before installing, change two things below:
+#   1. PARKPAL_TOKEN: a long random password. You'll paste the same text into the app.
+#   2. The volume path: a dataset on your pool with about 15 GB free (the US download is ~11 GB).
+#
+# First start downloads and prepares the data, which takes roughly 20–40 minutes for the whole US,
+# depending on your internet speed. After that it refreshes itself every week.
+
+services:
+  parkpal-server:
+    image: python:3.12-slim
+    container_name: parkpal-server
+    restart: unless-stopped
+    environment:
+      REGIONS: north-america/us
+      REFRESH_DAYS: "7"
+      PARKPAL_TOKEN: "CHANGE-ME-to-a-long-random-password"
+      PORT: "8080"
+      DATA_DIR: /data
+      PYTHONUNBUFFERED: "1"
+    ports:
+      - "8095:8080"
+    volumes:
+      - /mnt/POOL/apps/parkpal:/data
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        apt-get update -q
+        apt-get install -y -q --no-install-recommends osmium-tool curl ca-certificates
+        pip install -q --no-cache-dir osmium
+        curl -fsSL https://raw.githubusercontent.com/moblized/moblized-parkpal/main/server/parkpal_server.py -o /usr/local/bin/parkpal_server.py
+        exec python -u /usr/local/bin/parkpal_server.py
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=5)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 300s
