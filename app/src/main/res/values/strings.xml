@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ParkPal</string>
+    <string name="widget_name">ParkPal spot</string>
+    <string name="widget_description">Where you parked and when your meter ends</string>
+</resources>
