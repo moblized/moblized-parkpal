@@ -35,6 +35,35 @@ overloaded and can take 30+ seconds or fail outright.
 
 You can also check it from a browser: `https://parkpal.yourdomain.org/api/status?token=YOUR_TOKEN`.
 
+## Optional: Google parking to fill gaps
+
+OpenStreetMap is the main source because it has height limits and fees. Where it has little parking mapped,
+the server can also ask Google, and adds any lots and garages OpenStreetMap is missing (and fills in names for
+unnamed lots). In the app these show "From Google Maps". Google doesn't list height limits, so they're marked
+"check for a height bar".
+
+**Cost:** Google gives **5,000 of these searches free each month** (Nearby Search, "Pro" tier; the server only
+asks for name, location, type and address, which keeps it on that cheapest tier). By default the server
+**stops at 4,500 a month**, only asks Google when OpenStreetMap has fewer than 8 results, and remembers each
+area for 30 days. For personal use you should stay well under the free amount. The free allowance is per Google
+billing account, so other Google Maps projects on the same account share it.
+
+**Get a key:**
+
+1. Go to the [Google Cloud console](https://console.cloud.google.com/), create a project (e.g. "ParkPal"), and
+   add a billing account. Google requires a card even for free use.
+2. **APIs & Services → Library** → enable **Places API (New)**.
+3. **APIs & Services → Credentials → Create credentials → API key.** Edit the key and, under *API restrictions*,
+   restrict it to **Places API (New)**. If your home IP address doesn't change, you can also restrict it to that
+   IP under *Application restrictions*.
+4. **Billing → Budgets & alerts**: create a budget of $1 with email alerts, so you'd hear about any charge.
+5. In the TrueNAS app's YAML, set `GOOGLE_PLACES_KEY: "your key"` and redeploy.
+
+**Settings:** `GOOGLE_MODE` is `gaps` (default), `always` (ask Google for every new area, which uses more of
+the allowance), or `off`. `GOOGLE_GAP_THRESHOLD` is the "few results" cutoff (default 8), and
+`GOOGLE_MONTHLY_LIMIT` is the monthly stop (default 4500). The app's **Test connection** button shows how many
+Google searches have been used this month.
+
 ## Options
 
 Set these under `environment:` in the YAML.
@@ -63,4 +92,4 @@ app on TrueNAS updates it.
 
 Send the token as the `X-ParkPal-Token` header or `?token=`.
 
-Parking data © OpenStreetMap contributors (ODbL), via Geofabrik.
+Parking data © OpenStreetMap contributors (ODbL), via Geofabrik. Optional extra places from Google Maps.

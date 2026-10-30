@@ -24,6 +24,9 @@ jobs:
           sudo apt-get install -y -q osmium-tool
           pip install -q osmium
 
+      - name: Unit tests (fake Google, tiny map)
+        run: python server/test_parkpal_server.py
+
       - name: Build parking data from a real extract (Washington DC)
         env:
           DATA_DIR: ${{ runner.temp }}/parkpal

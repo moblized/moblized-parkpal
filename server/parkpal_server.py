@@ -24,6 +24,15 @@ Settings (environment variables):
   PORT           Port to listen on (default 8080).
   DATA_DIR       Where to keep data (default /data).
 
+Optional Google parking (fills gaps where OpenStreetMap has little parking mapped):
+  GOOGLE_PLACES_KEY     A Google Maps Platform key with "Places API (New)" enabled.
+  GOOGLE_MODE           "gaps" (default: only ask Google when OpenStreetMap has few results),
+                        "always", or "off".
+  GOOGLE_GAP_THRESHOLD  "Few results" means fewer than this many (default 8).
+  GOOGLE_MONTHLY_LIMIT  Stop asking Google after this many searches a month (default 4500; Google's free
+                        allowance for this kind of search is 5,000 a month).
+  Google results are cached for 30 days, so repeat visits to an area don't count again.
+
 Run once without serving (for testing):  python parkpal_server.py --build-once
 """
 
@@ -39,6 +48,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -51,7 +61,13 @@ TOKEN = os.environ.get("PARKPAL_TOKEN", "").strip()
 PORT = int(os.environ.get("PORT", "8080"))
 GEOFABRIK = os.environ.get("GEOFABRIK_URL", "https://download.geofabrik.de").rstrip("/")
 
+GOOGLE_KEY = os.environ.get("GOOGLE_PLACES_KEY", "").strip()
+GOOGLE_MODE = os.environ.get("GOOGLE_MODE", "gaps").strip().lower()
+GOOGLE_GAP_THRESHOLD = int(os.environ.get("GOOGLE_GAP_THRESHOLD", "8"))
+GOOGLE_MONTHLY_LIMIT = int(os.environ.get("GOOGLE_MONTHLY_LIMIT", "4500"))
+
 DB_PATH = os.path.join(DATA_DIR, "parking.db")
+GOOGLE_DB = os.path.join(DATA_DIR, "google.db")
 WORK_DIR = os.path.join(DATA_DIR, "work")
 MAX_RADIUS_M = 5000
 MAX_RESULTS = 500
@@ -378,6 +394,164 @@ def nearby(lat, lon, radius):
     return {"version": 0.6, "generator": "ParkPal server", "elements": elements}
 
 
+# ---------------------------------------------------------------------------------------------------------
+# Optional Google parking (fills gaps in OpenStreetMap)
+# ---------------------------------------------------------------------------------------------------------
+
+GOOGLE_GRID = 0.005           # ~500 m: nearby searches share one Google lookup
+GOOGLE_PADDING_M = 400        # so a snapped search still covers the real point
+GOOGLE_CACHE_DAYS = 30        # Google allows caching coordinates for up to 30 days
+GOOGLE_DUPLICATE_M = 60       # a Google place this close to an OpenStreetMap one is the same lot
+GOOGLE_FIELDS = "places.id,places.displayName,places.location,places.types,places.formattedAddress"
+_google_lock = threading.Lock()
+_google_types = ["parking", "parking_garage", "parking_lot"]
+
+
+def google_enabled():
+    return bool(GOOGLE_KEY) and GOOGLE_MODE in ("gaps", "always")
+
+
+def _google_db():
+    con = sqlite3.connect(GOOGLE_DB, timeout=10)
+    con.execute("CREATE TABLE IF NOT EXISTS cache (k TEXT PRIMARY KEY, ts REAL NOT NULL, places TEXT NOT NULL)")
+    con.execute("CREATE TABLE IF NOT EXISTS usage (month TEXT PRIMARY KEY, n INTEGER NOT NULL)")
+    return con
+
+
+def _this_month():
+    return datetime.now(timezone.utc).strftime("%Y-%m")
+
+
+def google_usage():
+    with _google_lock:
+        con = _google_db()
+        try:
+            row = con.execute("SELECT n FROM usage WHERE month = ?", (_this_month(),)).fetchone()
+        finally:
+            con.close()
+    return row[0] if row else 0
+
+
+def _google_request(lat, lon, radius):
+    """One Nearby Search (New) call. Only "Pro" fields are requested, the cheapest tier."""
+    global _google_types
+    body = {
+        "includedTypes": _google_types,
+        "maxResultCount": 20,
+        "rankPreference": "DISTANCE",
+        "locationRestriction": {
+            "circle": {"center": {"latitude": lat, "longitude": lon}, "radius": float(radius)}
+        },
+    }
+    req = urllib.request.Request(
+        "https://places.googleapis.com/v1/places:searchNearby",
+        data=json.dumps(body).encode("utf-8"),
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": GOOGLE_KEY,
+            "X-Goog-FieldMask": GOOGLE_FIELDS,
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.load(resp)
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "replace")[:300]
+        # If Google doesn't accept the newer garage/lot types, fall back to the plain "parking" type.
+        if e.code == 400 and len(_google_types) > 1 and "type" in detail.lower():
+            _google_types = ["parking"]
+            return _google_request(lat, lon, radius)
+        raise RuntimeError(f"HTTP {e.code}: {detail}")
+    places = []
+    for p in data.get("places", []):
+        loc = p.get("location") or {}
+        if "latitude" not in loc or "longitude" not in loc:
+            continue
+        types = p.get("types") or []
+        tags = {"parkpal:source": "google"}
+        name = (p.get("displayName") or {}).get("text")
+        if name:
+            tags["name"] = name
+        if "parking_garage" in types:
+            tags["parking"] = "multi-storey"
+        elif "parking_lot" in types:
+            tags["parking"] = "surface"
+        if p.get("formattedAddress"):
+            tags["addr:full"] = p["formattedAddress"]
+        places.append({"id": p.get("id") or f"{loc['latitude']},{loc['longitude']}",
+                       "lat": loc["latitude"], "lon": loc["longitude"], "tags": tags})
+    return places
+
+
+def google_nearby(lat, lon, radius):
+    """Google parking around a point: from the 30-day cache if possible, else one search (within the limit)."""
+    clat = round(lat / GOOGLE_GRID) * GOOGLE_GRID
+    clon = round(lon / GOOGLE_GRID) * GOOGLE_GRID
+    query_radius = min(50000, radius + GOOGLE_PADDING_M)
+    key = f"{clat:.3f}_{clon:.3f}_{query_radius}"
+    now = time.time()
+    with _google_lock:
+        con = _google_db()
+        try:
+            row = con.execute("SELECT ts, places FROM cache WHERE k = ?", (key,)).fetchone()
+            if row and now - row[0] < GOOGLE_CACHE_DAYS * 86400:
+                return json.loads(row[1])
+            month = _this_month()
+            used = con.execute("SELECT n FROM usage WHERE month = ?", (month,)).fetchone()
+            if (used[0] if used else 0) >= GOOGLE_MONTHLY_LIMIT:
+                return []
+            con.execute(
+                "INSERT INTO usage(month, n) VALUES (?, 1) ON CONFLICT(month) DO UPDATE SET n = n + 1", (month,)
+            )
+            con.commit()
+        finally:
+            con.close()
+    try:
+        places = _google_request(clat, clon, query_radius)
+    except Exception as e:
+        log.warning("Google parking lookup failed: %s", e)
+        return []
+    with _google_lock:
+        con = _google_db()
+        try:
+            con.execute("INSERT OR REPLACE INTO cache(k, ts, places) VALUES (?, ?, ?)", (key, now, json.dumps(places)))
+            con.execute("DELETE FROM cache WHERE ts < ?", (now - GOOGLE_CACHE_DAYS * 86400,))
+            con.commit()
+        finally:
+            con.close()
+    return places
+
+
+def _coords(e):
+    if "lat" in e:
+        return e["lat"], e["lon"]
+    return e["center"]["lat"], e["center"]["lon"]
+
+
+def merge_google(elements, google_places, lat, lon, radius):
+    """Adds Google places that OpenStreetMap doesn't have; gives unnamed OpenStreetMap lots Google's name."""
+    known = [(*_coords(e), e) for e in elements]
+    added = 0
+    for g in google_places:
+        if distance_m(lat, lon, g["lat"], g["lon"]) > radius:
+            continue
+        same = next(
+            (e for plat, plon, e in known if distance_m(plat, plon, g["lat"], g["lon"]) <= GOOGLE_DUPLICATE_M),
+            None,
+        )
+        if same is not None:
+            if not same["tags"].get("name") and g["tags"].get("name"):
+                same["tags"]["name"] = g["tags"]["name"]
+            continue
+        element = {"type": "google", "id": g["id"], "lat": g["lat"], "lon": g["lon"], "tags": dict(g["tags"])}
+        elements.append(element)
+        known.append((g["lat"], g["lon"], element))
+        added += 1
+    elements.sort(key=lambda e: distance_m(lat, lon, *_coords(e)))
+    return added
+
+
 def status():
     with _state_lock:
         activity = dict(_activity)
@@ -389,6 +563,12 @@ def status():
         "regions": meta["regions"] if meta else REGIONS,
         "busy": activity["busy"],
         "message": activity["message"],
+        "google": {
+            "enabled": google_enabled(),
+            "mode": GOOGLE_MODE if GOOGLE_KEY else "off",
+            "used_this_month": google_usage() if GOOGLE_KEY else 0,
+            "monthly_limit": GOOGLE_MONTHLY_LIMIT,
+        },
     }
 
 
@@ -443,13 +623,22 @@ class Handler(BaseHTTPRequestHandler):
             if not (-90 <= lat <= 90 and -180 <= lon <= 180):
                 return self.send_json(400, {"error": "lat/lon out of range"})
             radius = max(50, min(MAX_RADIUS_M, radius))
-            if not os.path.exists(DB_PATH):
+            have_osm = os.path.exists(DB_PATH)
+            if not have_osm and not google_enabled():
                 return self.send_json(503, {"error": "Parking data is still being prepared", **status()})
             started = time.perf_counter()
-            result = nearby(lat, lon, radius)
+            if have_osm:
+                result = nearby(lat, lon, radius)
+            else:
+                result = {"version": 0.6, "generator": "ParkPal server", "elements": []}
+            osm_count = len(result["elements"])
+            google_added = 0
+            if google_enabled() and (GOOGLE_MODE == "always" or osm_count < GOOGLE_GAP_THRESHOLD):
+                google_added = merge_google(result["elements"], google_nearby(lat, lon, radius), lat, lon, radius)
+                del result["elements"][MAX_RESULTS:]
             log.info(
-                "parking %.4f,%.4f r=%d -> %d in %.0f ms",
-                lat, lon, radius, len(result["elements"]), (time.perf_counter() - started) * 1000,
+                "parking %.4f,%.4f r=%d -> %d (+%d from Google) in %.0f ms",
+                lat, lon, radius, osm_count, google_added, (time.perf_counter() - started) * 1000,
             )
             return self.send_json(200, result)
         return self.send_json(404, {"error": "Not found"})
@@ -464,6 +653,8 @@ def main():
         return
     if not TOKEN:
         log.warning("PARKPAL_TOKEN is not set: anyone who finds this server can use it.")
+    if google_enabled():
+        log.info("Google parking is on (%s mode, up to %d searches a month)", GOOGLE_MODE, GOOGLE_MONTHLY_LIMIT)
     threading.Thread(target=refresher, name="refresher", daemon=True).start()
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     log.info("ParkPal server listening on port %d (regions: %s)", PORT, ", ".join(REGIONS))

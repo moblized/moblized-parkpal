@@ -19,6 +19,11 @@ services:
       PORT: "8080"
       DATA_DIR: /data
       PYTHONUNBUFFERED: "1"
+      # Optional: Google parking to fill gaps where OpenStreetMap has little parking (see README).
+      # Leave GOOGLE_PLACES_KEY empty to keep it off.
+      GOOGLE_PLACES_KEY: ""
+      GOOGLE_MODE: gaps
+      GOOGLE_MONTHLY_LIMIT: "4500"
     ports:
       - "8095:8080"
     volumes:

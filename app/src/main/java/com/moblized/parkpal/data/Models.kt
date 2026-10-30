@@ -7,6 +7,8 @@ enum class ParkingKind(val label: String, val covered: Boolean) {
     GARAGE("Garage", true),
     UNDERGROUND("Underground", true),
     STREET("Street", false),
+    /** Type not known (e.g. some Google places): could be a lot or a garage. */
+    UNKNOWN("Parking", false),
 }
 
 enum class FeeInfo(val label: String) {
@@ -29,7 +31,12 @@ data class ParkingPlace(
     val openingHours: String? = null,
     val operator: String? = null,
     val access: String? = null,
+    /** "google" for places that came from Google via your server; null for OpenStreetMap. */
+    val source: String? = null,
+    val address: String? = null,
 ) {
+    val fromGoogle: Boolean get() = source == "google"
+
     fun toJson(): JSONObject = JSONObject().apply {
         put("id", id)
         put("name", name)
@@ -43,6 +50,8 @@ data class ParkingPlace(
         putOpt("hours", openingHours)
         putOpt("op", operator)
         putOpt("access", access)
+        putOpt("src", source)
+        putOpt("addr", address)
     }
 
     companion object {
@@ -59,6 +68,8 @@ data class ParkingPlace(
             openingHours = o.str("hours"),
             operator = o.str("op"),
             access = o.str("access"),
+            source = o.str("src"),
+            address = o.str("addr"),
         )
     }
 }

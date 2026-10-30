@@ -44,7 +44,8 @@ object Clearance {
             val needed = (settings.vehicleHeightIn + settings.marginIn) * INCH
             return if (limit >= needed) FitStatus.FITS else FitStatus.TOO_LOW
         }
-        return if (place.kind.covered) FitStatus.CHECK_SIGN else FitStatus.OPEN_AIR
+        // Garages with no listed height, and places whose type isn't known, could have a height bar.
+        return if (place.kind.covered || place.kind == ParkingKind.UNKNOWN) FitStatus.CHECK_SIGN else FitStatus.OPEN_AIR
     }
 
     fun describe(place: ParkingPlace, status: FitStatus, s: AppSettings): String {
@@ -52,7 +53,11 @@ object Clearance {
         return when (status) {
             FitStatus.FITS -> "Height limit $limit · your ${s.vehicleName} fits"
             FitStatus.TOO_LOW -> "Height limit $limit · too low (you need ${Format.ftIn(s.vehicleHeightIn + s.marginIn)})"
-            FitStatus.CHECK_SIGN -> "Covered parking, height not listed · check the sign before you enter"
+            FitStatus.CHECK_SIGN -> if (place.kind == ParkingKind.UNKNOWN) {
+                "Height not listed · check for a height bar before you enter"
+            } else {
+                "Covered parking, height not listed · check the sign before you enter"
+            }
             FitStatus.NO_LIMIT -> "No height limit"
             FitStatus.OPEN_AIR -> "Open-air · no height limit"
         }

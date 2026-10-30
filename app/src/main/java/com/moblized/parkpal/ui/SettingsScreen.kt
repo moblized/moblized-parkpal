@@ -339,14 +339,23 @@ private fun ParkingServerSettings(savedUrl: String, savedToken: String) {
                 scope.launch {
                     try {
                         val st = ParkingServer.status(url, token)
-                        resultOk = st.ready
+                        val google = if (st.googleEnabled) {
+                            String.format(
+                                Locale.US, "\nGoogle parking: on, %,d of %,d searches used this month",
+                                st.googleUsed, st.googleLimit,
+                            )
+                        } else {
+                            ""
+                        }
+                        resultOk = st.ready || st.googleEnabled
                         result = when {
                             st.ready -> buildString {
                                 append("Connected: ").append(String.format(Locale.US, "%,d", st.places)).append(" parking places")
                                 st.updated?.let { append(", updated ").append(it.take(10)) }
                                 if (st.busy) append(". ").append(st.message)
+                                append(google)
                             }
-                            else -> "Connected, but still preparing data: ${st.message}"
+                            else -> "Connected, but still preparing data: ${st.message}$google"
                         }
                     } catch (e: CancellationException) {
                         throw e

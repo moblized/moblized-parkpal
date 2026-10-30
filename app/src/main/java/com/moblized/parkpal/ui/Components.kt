@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Directions
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocalParking
 import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
@@ -112,6 +113,8 @@ fun PlaceCard(
             extraLines.forEach { (icon, text) -> InfoLine(icon, text) }
             place.openingHours?.let { InfoLine(Icons.Filled.Schedule, it) }
             place.operator?.let { InfoLine(Icons.Filled.Business, it) }
+            place.address?.let { InfoLine(Icons.Filled.Place, it) }
+            if (place.fromGoogle) InfoLine(Icons.Filled.Info, "From Google Maps")
             if (place.access == "customers") InfoLine(Icons.Filled.Info, "Customers only")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onNavigate, modifier = Modifier.weight(1f)) {

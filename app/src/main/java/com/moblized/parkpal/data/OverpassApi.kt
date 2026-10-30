@@ -135,11 +135,17 @@ object OverpassApi {
             val access = tag("access")
             if (access == "private" || access == "no") continue
 
+            val source = tag("parkpal:source")
             val kind = when (tag("parking")) {
                 "multi-storey", "rooftop", "carports" -> ParkingKind.GARAGE
                 "underground" -> ParkingKind.UNDERGROUND
                 "street_side", "lane", "on_kerb", "half_on_kerb", "shoulder" -> ParkingKind.STREET
-                else -> if (tag("building") != null || tag("covered") == "yes") ParkingKind.GARAGE else ParkingKind.SURFACE
+                "surface" -> ParkingKind.SURFACE
+                else -> when {
+                    tag("building") != null || tag("covered") == "yes" -> ParkingKind.GARAGE
+                    source == "google" -> ParkingKind.UNKNOWN
+                    else -> ParkingKind.SURFACE
+                }
             }
             val fee = when {
                 tag("fee") == "no" -> FeeInfo.FREE
@@ -155,10 +161,12 @@ object OverpassApi {
                     ParkingKind.UNDERGROUND -> "Underground parking"
                     ParkingKind.STREET -> "Street parking"
                     ParkingKind.SURFACE -> "Parking lot"
+                    ParkingKind.UNKNOWN -> "Parking"
                 }
 
             out += ParkingPlace(
-                id = "${e.optString("type")}/${e.optLong("id")}",
+                // OpenStreetMap ids are numbers; Google place ids (from your server) are text.
+                id = "${e.optString("type")}/${e.optString("id")}",
                 name = name,
                 lat = lat,
                 lon = lon,
@@ -170,6 +178,8 @@ object OverpassApi {
                 openingHours = tag("opening_hours"),
                 operator = operator,
                 access = access,
+                source = source,
+                address = tag("addr:full"),
             )
         }
         return out

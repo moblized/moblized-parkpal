@@ -40,8 +40,8 @@ object ParkingRepo {
         // Tidy up very old areas in the background.
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             val cutoff = System.currentTimeMillis() - MAX_AGE_MS
-            // Also clear out saves from build 4 (no "v2_" prefix), which could be missing parking.
-            d.listFiles()?.filter { it.lastModified() < cutoff || !it.name.startsWith("v2_") }?.forEach { it.delete() }
+            // Also clear out saves from older versions.
+            d.listFiles()?.filter { it.lastModified() < cutoff || !it.name.startsWith("v3_") }?.forEach { it.delete() }
         }
     }
 
@@ -53,8 +53,8 @@ object ParkingRepo {
         val cLat = snap(lat)
         val cLon = snap(lon)
         val queryRadius = radiusMeters + SNAP_PADDING_M
-        // "v2": ignore anything saved by build 4, which could be missing parking.
-        val key = String.format(Locale.US, "v2_%.3f_%.3f_%d", cLat, cLon, queryRadius)
+        // Version prefix: bumped when saved results need refreshing (v3 picks up Google places from your server).
+        val key = String.format(Locale.US, "v3_%.3f_%.3f_%d", cLat, cLon, queryRadius)
         val cached = read(key)
         if (cached != null) emit(sortFrom(cached.places, lat, lon))
         val now = System.currentTimeMillis()

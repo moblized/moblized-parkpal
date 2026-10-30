@@ -16,6 +16,9 @@ object ParkingServer {
         val updated: String?,
         val busy: Boolean,
         val message: String,
+        val googleEnabled: Boolean = false,
+        val googleUsed: Int = 0,
+        val googleLimit: Int = 0,
     )
 
     /** "parkpal.example.org/" -> "https://parkpal.example.org" */
@@ -36,12 +39,16 @@ object ParkingServer {
 
     suspend fun status(baseUrl: String, token: String): Status = withContext(Dispatchers.IO) {
         val o = JSONObject(get("${normalize(baseUrl)}/api/status", token))
+        val google = o.optJSONObject("google")
         Status(
             ready = o.optBoolean("ready"),
             places = o.optLong("places"),
             updated = if (o.isNull("updated")) null else o.optString("updated"),
             busy = o.optBoolean("busy"),
             message = o.optString("message"),
+            googleEnabled = google?.optBoolean("enabled") ?: false,
+            googleUsed = google?.optInt("used_this_month") ?: 0,
+            googleLimit = google?.optInt("monthly_limit") ?: 0,
         )
     }
 
