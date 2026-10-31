@@ -9,11 +9,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Start Dawarich (app + background worker) with its official compose file
+      - name: Start Dawarich (background jobs run inside the app) with its official compose file
         run: |
           curl -fsSL https://raw.githubusercontent.com/Freika/dawarich/master/docker/docker-compose.yml -o compose.yml
           export SECRET_KEY_BASE=$(openssl rand -hex 64)
-          docker compose -f compose.yml up -d dawarich_app dawarich_sidekiq
+          docker compose -f compose.yml up -d dawarich_app
           for i in $(seq 1 120); do curl -sf localhost:3000/api/v1/health >/dev/null && break; sleep 5; done
           echo "::notice::Dawarich health: $(curl -s localhost:3000/api/v1/health)"
 
@@ -75,4 +75,4 @@ jobs:
 
       - name: Dawarich logs (on failure)
         if: failure()
-        run: docker logs dawarich_app 2>&1 | tail -40; docker logs dawarich_sidekiq 2>&1 | tail -40
+        run: docker logs dawarich_app 2>&1 | tail -60
