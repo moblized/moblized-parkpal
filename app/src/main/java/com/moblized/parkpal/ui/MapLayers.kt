@@ -7,6 +7,7 @@ import com.moblized.parkpal.data.Destination
 import com.moblized.parkpal.data.FitStatus
 import com.moblized.parkpal.data.ParkingPlace
 import com.moblized.parkpal.data.ParkingSession
+import com.moblized.parkpal.data.Poi
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.FolderOverlay
@@ -24,12 +25,15 @@ class MapLayers(
     private val onPlace: (ParkingPlace) -> Unit,
     private val onParked: () -> Unit,
     private val onDestination: () -> Unit,
+    private val onPoi: (Poi) -> Unit = {},
 ) {
     private val routeLayer = FolderOverlay()
     private val placeLayer = FolderOverlay()
     private val topLayer = FolderOverlay()
 
     private var places: List<Pair<ParkingPlace, FitStatus>>? = null
+    private var pois: List<Poi>? = null
+    private var selectedPoi: Poi? = null
     private var selected: Pair<ParkingPlace, FitStatus>? = null
     private var route: RouteUi? = null
     private var destination: Destination? = null
@@ -49,19 +53,27 @@ class MapLayers(
         destination: Destination?,
         parked: ParkingSession?,
         dark: Boolean,
+        pois: List<Poi> = emptyList(),
+        selectedPoi: Poi? = null,
     ) {
         val parkedAt = parked?.let { it.lat to it.lon }
-        val placesChanged = places !== this.places
-        val selectedChanged = selected != this.selected
+        val placesChanged = places !== this.places || pois !== this.pois
+        val selectedChanged = selected != this.selected || selectedPoi != this.selectedPoi
         val destChanged = destination != this.destination
         val routeChanged = route !== this.route || selectedChanged || destChanged || dark != this.dark
         val topChanged = selectedChanged || destChanged || parkedAt != this.parkedAt
 
-        if (placesChanged) drawPlaces(places)
-        if (routeChanged) drawRoute(selected?.first, route, destination, dark)
-        if (topChanged) drawTop(selected, destination, parkedAt)
+        if (placesChanged) drawPlaces(places, pois)
+        if (routeChanged) {
+            val target = selected?.first?.let { Target(it.id, it.lat, it.lon) }
+                ?: selectedPoi?.let { Target(it.id, it.lat, it.lon) }
+            drawRoute(target, route, if (selected != null) destination else null, dark)
+        }
+        if (topChanged) drawTop(selected, selectedPoi, destination, parkedAt)
 
         this.places = places
+        this.pois = pois
+        this.selectedPoi = selectedPoi
         this.selected = selected
         this.route = route
         this.destination = destination
@@ -70,8 +82,21 @@ class MapLayers(
         if (placesChanged || routeChanged || topChanged) map.invalidate()
     }
 
-    private fun drawPlaces(list: List<Pair<ParkingPlace, FitStatus>>) {
+    private class Target(val id: String, val lat: Double, val lon: Double)
+
+    private fun drawPlaces(list: List<Pair<ParkingPlace, FitStatus>>, pois: List<Poi>) {
         placeLayer.items.clear()
+        pois.take(MAX_MARKERS).forEach { poi ->
+            val marker = Marker(map)
+            marker.position = GeoPoint(poi.lat, poi.lon)
+            marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+            marker.icon = icons.emoji(poi.category.color.toInt(), poi.category.emoji)
+            marker.setOnMarkerClickListener { _, _ ->
+                onPoi(poi)
+                true
+            }
+            placeLayer.add(marker)
+        }
         // Closest first; a couple hundred markers is plenty and keeps panning smooth.
         list.take(MAX_MARKERS).forEach { (place, status) ->
             val marker = Marker(map)
@@ -86,7 +111,7 @@ class MapLayers(
         }
     }
 
-    private fun drawRoute(sel: ParkingPlace?, r: RouteUi?, dest: Destination?, dark: Boolean) {
+    private fun drawRoute(sel: Target?, r: RouteUi?, dest: Destination?, dark: Boolean) {
         routeLayer.items.clear()
         if (sel != null && r != null && r.placeId == sel.id && r.points.size > 1) {
             val pts = r.points.map { GeoPoint(it.first, it.second) }
@@ -107,7 +132,12 @@ class MapLayers(
         }
     }
 
-    private fun drawTop(sel: Pair<ParkingPlace, FitStatus>?, dest: Destination?, parkedAt: Pair<Double, Double>?) {
+    private fun drawTop(
+        sel: Pair<ParkingPlace, FitStatus>?,
+        poi: Poi?,
+        dest: Destination?,
+        parkedAt: Pair<Double, Double>?,
+    ) {
         topLayer.items.clear()
         if (parkedAt != null) {
             val marker = Marker(map)
@@ -137,6 +167,14 @@ class MapLayers(
             marker.position = GeoPoint(place.lat, place.lon)
             marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
             marker.icon = icons.forPlace(place, status, selected = true)
+            marker.setOnMarkerClickListener { _, _ -> true }
+            topLayer.add(marker)
+        }
+        if (poi != null) {
+            val marker = Marker(map)
+            marker.position = GeoPoint(poi.lat, poi.lon)
+            marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+            marker.icon = icons.emoji(poi.category.color.toInt(), poi.category.emoji, selected = true)
             marker.setOnMarkerClickListener { _, _ -> true }
             topLayer.add(marker)
         }

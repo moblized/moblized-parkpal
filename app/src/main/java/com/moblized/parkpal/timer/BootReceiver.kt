@@ -3,8 +3,10 @@ package com.moblized.parkpal.timer
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import com.moblized.parkpal.data.Dawarich
 import com.moblized.parkpal.data.ParkStore
 import com.moblized.parkpal.data.SettingsStore
+import com.moblized.parkpal.record.LocationRecorderService
 import com.moblized.parkpal.widget.WidgetRefresher
 
 /** Alarms are wiped when the phone restarts, so put the meter reminders back. */
@@ -18,5 +20,16 @@ class BootReceiver : BroadcastReceiver() {
             MeterAlarms.schedule(context, session, SettingsStore.settings.value.reminderLeadMin)
         }
         WidgetRefresher.refresh(context)
+
+        // Resume recording your timeline. Android only allows it from here with "Allow all the time";
+        // otherwise show a notification to tap.
+        val s = SettingsStore.settings.value
+        if (s.recordLocation && Dawarich.configured(s)) {
+            if (LocationRecorderService.hasBackgroundPermission(context)) {
+                LocationRecorderService.startIfEnabled(context)
+            } else {
+                LocationRecorderService.showResumePrompt(context)
+            }
+        }
     }
 }

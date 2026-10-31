@@ -11,6 +11,7 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.moblized.parkpal.record.PointBuffer
 import com.moblized.parkpal.util.Format
 import com.moblized.parkpal.util.distanceMeters
 import kotlinx.coroutines.CancellationException
@@ -36,6 +37,7 @@ object DawarichSync {
     private const val WORK = "dawarich-sync"
     private const val PLACES_MAX_AGE_MS = 10 * 60_000L
     private const val VISIT_PREFIX = "Parked · "
+    private const val POINT_BATCH = 500
 
     private lateinit var prefs: SharedPreferences
     private lateinit var appContext: Context
@@ -126,6 +128,15 @@ object DawarichSync {
         if (!prefs.contains(sinceKey)) prefs.edit().putLong(sinceKey, System.currentTimeMillis()).apply()
         val since = prefs.getLong(sinceKey, System.currentTimeMillis())
 
+        // Recorded locations, oldest first, in batches.
+        while (true) {
+            val batch = PointBuffer.peek(POINT_BATCH)
+            if (batch.isEmpty()) break
+            val ok = sendOrSkip { Dawarich.uploadPoints(s.dawarichUrl, s.dawarichKey, batch) }
+            if (!ok) return false
+            PointBuffer.drop(batch.size)
+        }
+
         if (s.dawarichVisits) {
             val sent = readIds("visits|$server")
             val pending = ParkStore.history.value
@@ -208,6 +219,7 @@ class DawarichWorker(context: Context, params: WorkerParameters) : CoroutineWork
         SettingsStore.init(applicationContext)
         ParkStore.init(applicationContext)
         DawarichSync.init(applicationContext)
+        PointBuffer.init(applicationContext)
         return if (DawarichSync.drain()) Result.success() else if (runAttemptCount < 8) Result.retry() else Result.failure()
     }
 }

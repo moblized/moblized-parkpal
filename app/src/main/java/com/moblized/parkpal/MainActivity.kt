@@ -15,6 +15,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.moblized.parkpal.data.SettingsStore
 import com.moblized.parkpal.data.ThemeMode
 import com.moblized.parkpal.icon.IconSwitcher
+import com.moblized.parkpal.record.LocationRecorderService
 import com.moblized.parkpal.ui.AppTab
 import com.moblized.parkpal.ui.MainViewModel
 import com.moblized.parkpal.ui.ParkPalRoot
@@ -57,6 +58,12 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
     }
 
+    override fun onStart() {
+        super.onStart()
+        // Keep recording your timeline for Dawarich if it's turned on (e.g. after a restart).
+        LocationRecorderService.startIfEnabled(this)
+    }
+
     override fun onResume() {
         super.onResume()
         // Finish an update install if you just allowed ParkPal to install apps.
@@ -73,11 +80,13 @@ class MainActivity : ComponentActivity() {
         when (intent?.action) {
             ACTION_PARK_HERE -> vm.parkHere()
             ACTION_OPEN_SPOT -> vm.setTab(AppTab.SPOT)
+            ACTION_WALK_TO_CAR -> vm.walkToCar()
         }
     }
 
     companion object {
         const val ACTION_PARK_HERE = "com.moblized.parkpal.PARK_HERE"
         const val ACTION_OPEN_SPOT = "com.moblized.parkpal.OPEN_SPOT"
+        const val ACTION_WALK_TO_CAR = "com.moblized.parkpal.WALK_TO_CAR"
     }
 }

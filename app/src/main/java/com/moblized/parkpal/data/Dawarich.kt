@@ -79,7 +79,7 @@ object Dawarich {
             .put("started_at", Instant.ofEpochMilli(startedAt).toString())
             .put("ended_at", Instant.ofEpochMilli(endedAt).toString())
             .put("status", "confirmed")
-        val o = JSONObject(request("POST", "${normalize(url)}/api/v1/visits", key, JSONObject().put("visit", visit)))
+        val o = JSONObject(request("POST", "${normalize(url)}/api/v1/visits", key, JSONObject().put("visit", visit).toString()))
         o.optLong("id")
     }
 
@@ -92,11 +92,19 @@ object Dawarich {
                 .put("longitude", lon)
                 .put("source", "manual")
                 .put("note", note)
-            val o = JSONObject(request("POST", "${normalize(url)}/api/v1/places", key, JSONObject().put("place", place)))
+            val o = JSONObject(request("POST", "${normalize(url)}/api/v1/places", key, JSONObject().put("place", place).toString()))
             o.optLong("id")
         }
 
-    private fun request(method: String, url: String, key: String, body: JSONObject?): String {
+    /** Uploads recorded points (GeoJSON features, as JSON strings) in one batch. */
+    suspend fun uploadPoints(url: String, key: String, features: List<String>) {
+        withContext(Dispatchers.IO) {
+            val body = features.joinToString(separator = ",", prefix = "{\"locations\":[", postfix = "]}")
+            request("POST", "${normalize(url)}/api/v1/points", key, body)
+        }
+    }
+
+    private fun request(method: String, url: String, key: String, body: String?): String {
         val conn = URL(url).openConnection() as HttpURLConnection
         try {
             conn.requestMethod = method
@@ -108,7 +116,7 @@ object Dawarich {
             if (body != null) {
                 conn.doOutput = true
                 conn.setRequestProperty("Content-Type", "application/json")
-                conn.outputStream.use { it.write(body.toString().toByteArray()) }
+                conn.outputStream.use { it.write(body.toByteArray()) }
             }
             val code = conn.responseCode
             if (code in 200..299) return conn.inputStream.bufferedReader().use { it.readText() }

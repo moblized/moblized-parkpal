@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Directions
 import androidx.compose.material.icons.filled.History
@@ -31,6 +32,7 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -48,11 +50,11 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.moblized.parkpal.data.AppSettings
 import com.moblized.parkpal.data.Clearance
+import com.moblized.parkpal.data.Destination
 import com.moblized.parkpal.data.ParkingPlace
 import com.moblized.parkpal.data.ParkingSession
 import com.moblized.parkpal.ui.theme.ParkColors
 import com.moblized.parkpal.util.Format
-import com.moblized.parkpal.util.Nav
 
 @Composable
 fun SavedScreen(vm: MainViewModel) {
@@ -60,6 +62,8 @@ fun SavedScreen(vm: MainViewModel) {
     val favorites by vm.favorites.collectAsStateWithLifecycle()
     val history by vm.history.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
+    val places by vm.dawarichPlaces.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { vm.onSearchFocused() }
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         Text(
             "Saved",
@@ -68,10 +72,60 @@ fun SavedScreen(vm: MainViewModel) {
             modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 8.dp),
         )
         TabRow(selectedTabIndex = tab) {
-            Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Favorites (${favorites.size})") })
-            Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("History (${history.size})") })
+            Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Places") })
+            Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Garages (${favorites.size})") })
+            Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("History") })
         }
-        if (tab == 0) FavoritesList(favorites, settings, vm) else HistoryList(history, vm)
+        when (tab) {
+            0 -> PlacesList(places, settings, vm)
+            1 -> FavoritesList(favorites, settings, vm)
+            else -> HistoryList(history, vm)
+        }
+    }
+}
+
+/** Your Dawarich places: tap one to see parking around it, or drive straight there. */
+@Composable
+private fun PlacesList(places: List<Destination>, settings: AppSettings, vm: MainViewModel) {
+    val connected = settings.dawarichUrl.isNotBlank() && settings.dawarichKey.isNotBlank()
+    if (places.isEmpty()) {
+        EmptyState(
+            Icons.Filled.Bookmark,
+            if (connected) "No places yet" else "Your places live in Dawarich",
+            if (connected) {
+                "Places you add in Dawarich show up here. You can also save gas stations, restaurants and more from Explore with the bookmark button."
+            } else {
+                "Connect Dawarich in Settings to see your places here and use them as destinations."
+            },
+        )
+        return
+    }
+    LazyColumn(contentPadding = PaddingValues(vertical = 8.dp)) {
+        items(places, key = { "${it.title}|${it.lat}|${it.lon}" }) { d ->
+            ListItem(
+                headlineContent = { Text(d.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                supportingContent = if (d.subtitle.isNotBlank()) {
+                    { Text(d.subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                } else {
+                    null
+                },
+                leadingContent = {
+                    Box(
+                        Modifier.size(36.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Filled.Bookmark, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                    }
+                },
+                trailingContent = {
+                    IconButton(onClick = { vm.driveToSaved(d) }) {
+                        Icon(Icons.Filled.Directions, contentDescription = "Directions")
+                    }
+                },
+                modifier = Modifier.clickable { vm.pickDestination(d) },
+            )
+            HorizontalDivider()
+        }
     }
 }
 
@@ -98,7 +152,7 @@ private fun FavoritesList(favorites: List<ParkingPlace>, settings: AppSettings, 
                 },
                 trailingContent = {
                     Row {
-                        IconButton(onClick = { Nav.navigate(ctx, p.lat, p.lon, walking = false) }) {
+                        IconButton(onClick = { vm.driveToPlace(p) }) {
                             Icon(Icons.Filled.Directions, contentDescription = "Navigate")
                         }
                         IconButton(onClick = { vm.toggleFavorite(p) }) {

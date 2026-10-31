@@ -6,6 +6,7 @@ import com.moblized.parkpal.data.OverpassApi
 import com.moblized.parkpal.data.ParkStore
 import com.moblized.parkpal.data.ParkingRepo
 import com.moblized.parkpal.data.SettingsStore
+import com.moblized.parkpal.record.PointBuffer
 import com.moblized.parkpal.timer.Notifications
 import org.osmdroid.config.Configuration
 import java.io.File
@@ -17,6 +18,7 @@ class ParkPalApp : Application() {
         ParkStore.init(this)
         ParkingRepo.init(this)
         DawarichSync.init(this)
+        PointBuffer.init(this)
         // Send anything waiting for Dawarich and refresh your places.
         DawarichSync.kick(this)
         Notifications.createChannels(this)

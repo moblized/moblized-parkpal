@@ -32,7 +32,6 @@ import com.moblized.parkpal.MainActivity
 import com.moblized.parkpal.data.ParkStore
 import com.moblized.parkpal.data.ParkingSession
 import com.moblized.parkpal.util.Format
-import com.moblized.parkpal.util.Nav
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -110,7 +109,12 @@ private fun WidgetBody(session: ParkingSession?) {
             Spacer(GlanceModifier.height(8.dp))
             Button(
                 text = "Walk back",
-                onClick = actionStartActivity(Nav.intent(session.lat, session.lon, walking = true)),
+                // Opens ParkPal's walking directions (or Google Maps, if that's chosen in Settings).
+                onClick = actionStartActivity(
+                    Intent(LocalContext.current, MainActivity::class.java)
+                        .setAction(MainActivity.ACTION_WALK_TO_CAR)
+                        .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                ),
             )
         }
     }

@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -39,6 +40,7 @@ import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -63,13 +65,18 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.moblized.parkpal.data.AppSettings
 import com.moblized.parkpal.data.Dawarich
 import com.moblized.parkpal.data.DawarichSync
 import com.moblized.parkpal.data.ParkStore
+import com.moblized.parkpal.data.NavApp
 import com.moblized.parkpal.data.ParkingServer
+import com.moblized.parkpal.data.RecordMode
 import com.moblized.parkpal.data.SettingsStore
+import com.moblized.parkpal.record.LocationRecorderService
+import com.moblized.parkpal.record.PointBuffer
 import com.moblized.parkpal.data.ThemeMode
 import com.moblized.parkpal.timer.MeterAlarms
 import com.moblized.parkpal.util.Format
@@ -156,6 +163,41 @@ fun SettingsScreen(vm: MainViewModel) {
                 onSelect = { r -> SettingsStore.update { it.copy(walkRadiusMeters = r) } },
             )
             Hint("If there's very little parking that fits, ParkPal looks a bit farther out.")
+        }
+
+        Section("Directions") {
+            NavApp.entries.forEach { app ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable { SettingsStore.update { it.copy(navApp = app) } },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(
+                        selected = s.navApp == app,
+                        onClick = { SettingsStore.update { it.copy(navApp = app) } },
+                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(app.label, style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            when (app) {
+                                NavApp.PARKPAL -> "Turn-by-turn with voice, right here. Offers to save your spot when you arrive."
+                                NavApp.GOOGLE_MAPS -> "Hands each trip to Google Maps (or your usual maps app)."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            ToggleRow(
+                title = "Spoken directions",
+                detail = "Music and podcasts get quieter while ParkPal speaks",
+                checked = s.navVoice,
+                enabled = s.navApp == NavApp.PARKPAL,
+                onChange = { v -> SettingsStore.update { it.copy(navVoice = v) } },
+            )
+            Hint("Routes are regular car routes from OpenStreetMap; they don't know about low bridges, so watch for height signs.")
         }
 
         Section("Meter reminders") {
@@ -399,21 +441,104 @@ private fun DawarichSettings(s: AppSettings) {
             color = if (resultOk) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
         )
     }
+
+    HorizontalDivider(Modifier.padding(vertical = 4.dp))
+    Text("Location history", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+    RecordingSettings(s)
+}
+
+/** Recording your location in the background for your Dawarich timeline. */
+@Composable
+private fun RecordingSettings(s: AppSettings) {
+    val ctx = LocalContext.current
+    val running by LocationRecorderService.running.collectAsStateWithLifecycle()
+    val pending by PointBuffer.pending.collectAsStateWithLifecycle()
+    val configured = Dawarich.configured(s)
+    val power = remember { ctx.getSystemService(PowerManager::class.java) }
+    var backgroundAllowed by remember { mutableStateOf(LocationRecorderService.hasBackgroundPermission(ctx)) }
+    var unrestricted by remember { mutableStateOf(power?.isIgnoringBatteryOptimizations(ctx.packageName) == true) }
+    LifecycleResumeEffect(Unit) {
+        backgroundAllowed = LocationRecorderService.hasBackgroundPermission(ctx)
+        unrestricted = power?.isIgnoringBatteryOptimizations(ctx.packageName) == true
+        onPauseOrDispose { }
+    }
+    val backgroundLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        backgroundAllowed = LocationRecorderService.hasBackgroundPermission(ctx)
+    }
+
+    ToggleRow(
+        "Record my location",
+        if (configured) "Builds your Dawarich timeline as you go, like a tracker app" else "Connect Dawarich above first",
+        s.recordLocation && configured,
+        enabled = configured,
+    ) { on ->
+        SettingsStore.update { it.copy(recordLocation = on) }
+        if (on) LocationRecorderService.startIfEnabled(ctx) else LocationRecorderService.stop(ctx)
+    }
+    if (!s.recordLocation || !configured) return
+
+    Text(
+        buildString {
+            append(if (running) "Recording" else "Not running right now (it starts when you open ParkPal)")
+            if (pending > 0) append(" · ").append(String.format(Locale.US, "%,d", pending)).append(" points waiting to upload")
+        },
+        style = MaterialTheme.typography.bodyMedium,
+        color = if (running) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    ChoiceChips(
+        options = RecordMode.entries.map { it to it.label },
+        selected = s.recordMode,
+        onSelect = { m ->
+            SettingsStore.update { it.copy(recordMode = m) }
+            LocationRecorderService.stop(ctx)
+            LocationRecorderService.startIfEnabled(ctx)
+        },
+    )
+    Hint(s.recordMode.detail)
+    if (pending > 0) {
+        OutlinedButton(onClick = { DawarichSync.kick(ctx) }) { Text("Upload now") }
+    }
+    if (!backgroundAllowed && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        OutlinedButton(onClick = { backgroundLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION) }) {
+            Text("Allow location all the time")
+        }
+        Hint("Lets recording start again by itself after your phone restarts. Choose \"Allow all the time\".")
+    }
+    if (!unrestricted) {
+        OutlinedButton(onClick = {
+            try {
+                ctx.startActivity(
+                    Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${ctx.packageName}")),
+                )
+            } catch (e: Exception) {
+                ctx.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            }
+        }) {
+            Text("Don't let Android pause recording")
+        }
+        Hint("Samsung phones especially pause background apps. Also set ParkPal to \"Unrestricted\" under Settings → Apps → ParkPal → Battery.")
+    }
 }
 
 @Composable
-private fun ToggleRow(title: String, detail: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+private fun ToggleRow(
+    title: String,
+    detail: String,
+    checked: Boolean,
+    enabled: Boolean = true,
+    onChange: (Boolean) -> Unit,
+) {
     Row(
         Modifier
             .fillMaxWidth()
-            .clickable { onChange(!checked) },
+            .clickable(enabled = enabled) { onChange(!checked) },
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
             Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Switch(checked = checked, onCheckedChange = onChange)
+        Switch(checked = checked, onCheckedChange = onChange, enabled = enabled)
     }
 }
 
