@@ -105,6 +105,11 @@
             android:exported="false"
             android:foregroundServiceType="location" />
 
+        <service
+            android:name=".nav.NavigationService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+
         <receiver
             android:name=".timer.BootReceiver"
             android:exported="true">

@@ -80,11 +80,13 @@ class MainActivity : ComponentActivity() {
         when (intent?.action) {
             ACTION_PARK_HERE -> vm.parkHere()
             ACTION_OPEN_SPOT -> vm.setTab(AppTab.SPOT)
+            ACTION_WALK_TO_CAR -> vm.walkToCar()
         }
     }
 
     companion object {
         const val ACTION_PARK_HERE = "com.moblized.parkpal.PARK_HERE"
         const val ACTION_OPEN_SPOT = "com.moblized.parkpal.OPEN_SPOT"
+        const val ACTION_WALK_TO_CAR = "com.moblized.parkpal.WALK_TO_CAR"
     }
 }

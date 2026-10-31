@@ -54,9 +54,22 @@ android {
     buildFeatures {
         compose = true
     }
+    testOptions {
+        unitTests.all { test ->
+            test.testLogging {
+                events("failed")
+                showStandardStreams = true
+                exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+            }
+        }
+    }
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
+    // Android's built-in JSON classes are stubs in plain unit tests; this is the real thing.
+    testImplementation("org.json:json:20240303")
+
     val composeBom = platform("androidx.compose:compose-bom:2024.12.01")
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")

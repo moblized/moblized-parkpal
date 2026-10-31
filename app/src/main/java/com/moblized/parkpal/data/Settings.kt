@@ -13,6 +13,12 @@ enum class RecordMode(val label: String, val detail: String) {
     PRECISE("Precise", "Every few seconds with GPS; uses the most battery"),
 }
 
+/** Which app gives turn-by-turn directions. */
+enum class NavApp(val label: String) {
+    PARKPAL("ParkPal"),
+    GOOGLE_MAPS("Google Maps / other app"),
+}
+
 enum class ThemeMode(val label: String) {
     SYSTEM("Match system"),
     LIGHT("Light"),
@@ -51,6 +57,10 @@ data class AppSettings(
     /** Record your location in the background and send it to Dawarich. */
     val recordLocation: Boolean = false,
     val recordMode: RecordMode = RecordMode.BALANCED,
+    /** Turn-by-turn directions in ParkPal, or hand off to Google Maps. */
+    val navApp: NavApp = NavApp.PARKPAL,
+    /** Spoken directions during navigation. */
+    val navVoice: Boolean = true,
 )
 
 object SettingsStore {
@@ -83,6 +93,8 @@ object SettingsStore {
             dawarichFavorites = prefs.getBoolean("dawarichFavorites", d.dawarichFavorites),
             recordLocation = prefs.getBoolean("recordLocation", d.recordLocation),
             recordMode = enumOr(prefs.getString("recordMode", null), d.recordMode),
+            navApp = enumOr(prefs.getString("navApp", null), d.navApp),
+            navVoice = prefs.getBoolean("navVoice", d.navVoice),
         )
     }
 
@@ -111,6 +123,8 @@ object SettingsStore {
             .putBoolean("dawarichFavorites", s.dawarichFavorites)
             .putBoolean("recordLocation", s.recordLocation)
             .putString("recordMode", s.recordMode.name)
+            .putString("navApp", s.navApp.name)
+            .putBoolean("navVoice", s.navVoice)
             .apply()
     }
 }

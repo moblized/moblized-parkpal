@@ -71,6 +71,7 @@ import com.moblized.parkpal.data.AppSettings
 import com.moblized.parkpal.data.Dawarich
 import com.moblized.parkpal.data.DawarichSync
 import com.moblized.parkpal.data.ParkStore
+import com.moblized.parkpal.data.NavApp
 import com.moblized.parkpal.data.ParkingServer
 import com.moblized.parkpal.data.RecordMode
 import com.moblized.parkpal.data.SettingsStore
@@ -162,6 +163,41 @@ fun SettingsScreen(vm: MainViewModel) {
                 onSelect = { r -> SettingsStore.update { it.copy(walkRadiusMeters = r) } },
             )
             Hint("If there's very little parking that fits, ParkPal looks a bit farther out.")
+        }
+
+        Section("Directions") {
+            NavApp.entries.forEach { app ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable { SettingsStore.update { it.copy(navApp = app) } },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(
+                        selected = s.navApp == app,
+                        onClick = { SettingsStore.update { it.copy(navApp = app) } },
+                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(app.label, style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            when (app) {
+                                NavApp.PARKPAL -> "Turn-by-turn with voice, right here. Offers to save your spot when you arrive."
+                                NavApp.GOOGLE_MAPS -> "Hands each trip to Google Maps (or your usual maps app)."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            ToggleRow(
+                title = "Spoken directions",
+                detail = "Music and podcasts get quieter while ParkPal speaks",
+                checked = s.navVoice,
+                enabled = s.navApp == NavApp.PARKPAL,
+                onChange = { v -> SettingsStore.update { it.copy(navVoice = v) } },
+            )
+            Hint("Routes are regular car routes from OpenStreetMap; they don't know about low bridges, so watch for height signs.")
         }
 
         Section("Meter reminders") {

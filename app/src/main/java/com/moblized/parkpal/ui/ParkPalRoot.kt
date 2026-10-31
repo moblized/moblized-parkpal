@@ -5,10 +5,12 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
@@ -25,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.moblized.parkpal.nav.NavSession
 import com.moblized.parkpal.util.LocationHelper
 
 @Composable
@@ -33,6 +36,7 @@ fun ParkPalRoot(vm: MainViewModel, dark: Boolean) {
     val tab by vm.tab.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
     val update by vm.update.collectAsStateWithLifecycle()
+    val nav by NavSession.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var hasLocation by remember { mutableStateOf(LocationHelper.hasPermission(ctx)) }
 
@@ -83,6 +87,13 @@ fun ParkPalRoot(vm: MainViewModel, dark: Boolean) {
                 AppTab.SAVED -> SavedScreen(vm)
                 AppTab.SETTINGS -> SettingsScreen(vm)
             }
+        }
+    }
+
+    // Turn-by-turn navigation covers the app while it runs; the map underneath stays as you left it.
+    nav?.let { state ->
+        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+            NavigationScreen(state, dark, onParked = { vm.setTab(AppTab.SPOT) })
         }
     }
 

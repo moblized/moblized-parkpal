@@ -168,7 +168,7 @@ private fun ActiveSpot(s: ParkingSession, settings: AppSettings, vm: MainViewMod
             val destLon = s.destLon
             if (destName != null && destLat != null && destLon != null) {
                 FilledTonalButton(
-                    onClick = { Nav.navigate(ctx, destLat, destLon, walking = true) },
+                    onClick = { vm.walkToDestination() },
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Icon(Icons.Filled.Place, contentDescription = null)
@@ -181,7 +181,7 @@ private fun ActiveSpot(s: ParkingSession, settings: AppSettings, vm: MainViewMod
                 }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Button(onClick = { Nav.navigate(ctx, s.lat, s.lon, walking = true) }, modifier = Modifier.weight(1f)) {
+                Button(onClick = { vm.walkToCar() }, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Filled.DirectionsWalk, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
                     Text("Walk back")

@@ -29,6 +29,31 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      - name: Fetch sample routes for the navigation tests
+        continue-on-error: true
+        run: |
+          mkdir -p app/src/test/resources/routes
+          q="overview=full&geometries=geojson&steps=true"
+          d=app/src/test/resources/routes
+          curl -sf --max-time 30 "https://router.project-osrm.org/route/v1/driving/-77.0063,38.8973;-77.0365,38.8977?$q" -o $d/dc_drive.json || true
+          curl -sf --max-time 30 "https://router.project-osrm.org/route/v1/driving/-77.0063,38.8973;-76.6122,39.2904?$q" -o $d/highway_drive.json || true
+          curl -sf --max-time 30 "https://routing.openstreetmap.de/routed-car/route/v1/driving/-77.0063,38.8973;-77.0502,38.8893?$q" -o $d/fossgis_drive.json || true
+          curl -sf --max-time 30 "https://routing.openstreetmap.de/routed-foot/route/v1/driving/-77.0063,38.8973;-77.0090,38.8899?$q" -o $d/walk.json || true
+          ls -la $d
+
+      - name: Unit tests (navigation)
+        run: |
+          chmod +x gradlew
+          set -o pipefail
+          ./gradlew testDebugUnitTest --stacktrace 2>&1 | tee test.log
+
+      - name: Show navigation instructions
+        if: always()
+        run: |
+          grep -E "NAV\||FAILED|AssertionError|expected" test.log | sed 's/^.*NAV|//' | head -10 | while IFS= read -r line; do
+            echo "::notice::$line"
+          done
+
       - name: Build optimized APK
         run: |
           chmod +x gradlew

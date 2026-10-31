@@ -30,6 +30,7 @@ import com.moblized.parkpal.data.Poi
 import com.moblized.parkpal.data.PoiCategory
 import com.moblized.parkpal.data.RouteApi
 import com.moblized.parkpal.data.SettingsStore
+import com.moblized.parkpal.nav.Directions
 import com.moblized.parkpal.update.UpdateInfo
 import com.moblized.parkpal.update.Updater
 import com.moblized.parkpal.util.Format
@@ -371,8 +372,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Drive straight to an Explore place. */
     fun goToPoi(poi: Poi) {
         // Somewhere you'd park and walk in: remember it, so parking afterwards is linked to it.
-        if (poi.category != PoiCategory.GAS && poi.category != PoiCategory.REST) ParkStore.setTrip(poi.toDestination())
-        Nav.navigate(ctx, poi.lat, poi.lon, walking = false)
+        val parkThere = poi.category != PoiCategory.GAS && poi.category != PoiCategory.REST
+        if (parkThere) ParkStore.setTrip(poi.toDestination())
+        Directions.driveTo(ctx, poi.toDestination(), offerParking = parkThere)
     }
 
     /** Use an Explore place as the destination, which finds parking around it. */
@@ -606,18 +608,46 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _fit.value = listOf(dest.lat to dest.lon) + nearest.map { it.lat to it.lon }
     }
 
-    /** Start driving to a parking place (in Google Maps). */
+    /** Start driving to a parking place; on arrival, offer to save the spot and walk to the destination. */
     fun go(place: ParkingPlace) {
-        _destination.value?.let { ParkStore.setTrip(it) }
-        Nav.navigate(ctx, place.lat, place.lon, walking = false)
+        val dest = _destination.value
+        dest?.let { ParkStore.setTrip(it) }
+        Directions.driveToParking(ctx, place, after = dest)
     }
 
     /** Skip parking and drive straight to the destination. */
     fun driveToDestination() {
         val dest = _destination.value ?: return
         ParkStore.setTrip(dest)
-        Nav.navigate(ctx, dest.lat, dest.lon, walking = false)
+        Directions.driveTo(ctx, dest, offerParking = true)
     }
+
+    /** Walking directions back to your truck. */
+    fun walkToCar() {
+        val s = ParkStore.active.value
+        if (s == null) {
+            _tab.value = AppTab.SPOT
+            toast("No parking spot saved")
+            return
+        }
+        Directions.walkTo(ctx, Destination(s.title(), s.address ?: "", s.lat, s.lon), toCar = true)
+    }
+
+    /** Walking directions from your truck to where you were going. */
+    fun walkToDestination() {
+        val s = ParkStore.active.value ?: return
+        val name = s.destName ?: return
+        Directions.walkTo(ctx, Destination(name, "", s.destLat ?: return, s.destLon ?: return))
+    }
+
+    /** Drive to one of your places; on arrival, offer to save where you parked. */
+    fun driveToSaved(d: Destination) {
+        ParkStore.setTrip(d)
+        Directions.driveTo(ctx, d, offerParking = true)
+    }
+
+    /** Drive to a saved garage. */
+    fun driveToPlace(place: ParkingPlace) = Directions.driveToParking(ctx, place, after = null)
 
     private suspend fun userLocation(): Pair<Double, Double>? {
         val cached = _userLoc.value
