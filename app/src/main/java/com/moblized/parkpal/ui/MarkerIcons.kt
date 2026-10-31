@@ -25,6 +25,12 @@ class MarkerIcons(private val context: Context) {
 
     fun parked(): Drawable = circle(ParkColors.Parked.toArgb(), "🛻", 40)
 
+    /** Numbered stop on the timeline map. */
+    fun numbered(n: Int): Drawable = circle(0xFF0E7490.toInt(), n.toString(), 28)
+
+    /** A round marker with an emoji, e.g. for gas stations or restaurants. */
+    fun emoji(color: Int, emoji: String, selected: Boolean = false): Drawable = circle(color, emoji, if (selected) 40 else 32)
+
     /** A red map pin for the destination, anchored at its tip. */
     fun destination(): Drawable = cache.getOrPut("destination") {
         val d = context.resources.displayMetrics.density

@@ -13,6 +13,12 @@
         android:name="android.permission.SCHEDULE_EXACT_ALARM"
         android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <!-- Recording your timeline for Dawarich, and turn-by-turn navigation, keep running in the background -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- In-app updates from GitHub releases -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
@@ -93,6 +99,11 @@
         <receiver
             android:name=".timer.MeterReceiver"
             android:exported="false" />
+
+        <service
+            android:name=".record.LocationRecorderService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
 
         <receiver
             android:name=".timer.BootReceiver"

@@ -6,6 +6,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
+/** How closely to record your location for Dawarich. */
+enum class RecordMode(val label: String, val detail: String) {
+    BATTERY("Battery saver", "About every 5 minutes, using little battery"),
+    BALANCED("Balanced", "Light while you're still, detailed while you're driving"),
+    PRECISE("Precise", "Every few seconds with GPS; uses the most battery"),
+}
+
 enum class ThemeMode(val label: String) {
     SYSTEM("Match system"),
     LIGHT("Light"),
@@ -41,6 +48,9 @@ data class AppSettings(
     val dawarichPlaces: Boolean = true,
     /** Save starred garages as Dawarich places. */
     val dawarichFavorites: Boolean = true,
+    /** Record your location in the background and send it to Dawarich. */
+    val recordLocation: Boolean = false,
+    val recordMode: RecordMode = RecordMode.BALANCED,
 )
 
 object SettingsStore {
@@ -71,6 +81,8 @@ object SettingsStore {
             dawarichVisits = prefs.getBoolean("dawarichVisits", d.dawarichVisits),
             dawarichPlaces = prefs.getBoolean("dawarichPlaces", d.dawarichPlaces),
             dawarichFavorites = prefs.getBoolean("dawarichFavorites", d.dawarichFavorites),
+            recordLocation = prefs.getBoolean("recordLocation", d.recordLocation),
+            recordMode = enumOr(prefs.getString("recordMode", null), d.recordMode),
         )
     }
 
@@ -97,6 +109,8 @@ object SettingsStore {
             .putBoolean("dawarichVisits", s.dawarichVisits)
             .putBoolean("dawarichPlaces", s.dawarichPlaces)
             .putBoolean("dawarichFavorites", s.dawarichFavorites)
+            .putBoolean("recordLocation", s.recordLocation)
+            .putString("recordMode", s.recordMode.name)
             .apply()
     }
 }

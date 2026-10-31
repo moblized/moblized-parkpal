@@ -78,6 +78,7 @@ fun ParkPalRoot(vm: MainViewModel, dark: Boolean) {
         Box(Modifier.fillMaxSize().padding(bottom = padding.calculateBottomPadding())) {
             when (tab) {
                 AppTab.MAP -> MapScreen(vm, dark, hasLocation)
+                AppTab.TIMELINE -> TimelineScreen(dark)
                 AppTab.SPOT -> MySpotScreen(vm)
                 AppTab.SAVED -> SavedScreen(vm)
                 AppTab.SETTINGS -> SettingsScreen(vm)

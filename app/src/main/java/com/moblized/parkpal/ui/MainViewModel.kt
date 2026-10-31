@@ -7,6 +7,7 @@ import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -46,7 +47,8 @@ import kotlinx.coroutines.launch
 import java.io.File
 
 enum class AppTab(val label: String, val icon: ImageVector) {
-    MAP("Find", Icons.Filled.Map),
+    MAP("Explore", Icons.Filled.Map),
+    TIMELINE("Timeline", Icons.Filled.Timeline),
     SPOT("My spot", Icons.Filled.DirectionsCar),
     SAVED("Saved", Icons.Filled.Star),
     SETTINGS("Settings", Icons.Filled.Settings),

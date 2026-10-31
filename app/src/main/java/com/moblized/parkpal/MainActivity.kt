@@ -15,6 +15,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.moblized.parkpal.data.SettingsStore
 import com.moblized.parkpal.data.ThemeMode
 import com.moblized.parkpal.icon.IconSwitcher
+import com.moblized.parkpal.record.LocationRecorderService
 import com.moblized.parkpal.ui.AppTab
 import com.moblized.parkpal.ui.MainViewModel
 import com.moblized.parkpal.ui.ParkPalRoot
@@ -55,6 +56,12 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleIntent(intent)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Keep recording your timeline for Dawarich if it's turned on (e.g. after a restart).
+        LocationRecorderService.startIfEnabled(this)
     }
 
     override fun onResume() {

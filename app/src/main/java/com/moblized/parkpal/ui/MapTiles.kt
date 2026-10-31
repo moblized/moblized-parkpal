@@ -3,6 +3,8 @@ package com.moblized.parkpal.ui
 import org.osmdroid.tileprovider.tilesource.ITileSource
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.tileprovider.tilesource.XYTileSource
+import org.osmdroid.views.MapView
+import org.osmdroid.views.overlay.TilesOverlay
 import java.net.URLEncoder
 
 /**
@@ -37,4 +39,13 @@ object MapTiles {
 
     /** The standard map has no dark style, so dark mode inverts its colors instead. */
     fun invertInDarkMode(cartoKey: String): Boolean = cartoKey.isBlank()
+
+    /** Applies the right style to a map for light/dark mode. */
+    fun applyTo(map: MapView, dark: Boolean, cartoKey: String) {
+        val source = source(dark, cartoKey)
+        if (map.tileProvider.tileSource != source) map.setTileSource(source)
+        val invert = dark && invertInDarkMode(cartoKey)
+        map.overlayManager.tilesOverlay.setColorFilter(if (invert) TilesOverlay.INVERT_COLORS else null)
+        map.invalidate()
+    }
 }
