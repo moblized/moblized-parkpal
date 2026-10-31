@@ -1,0 +1,64 @@
+name: Dawarich compatibility check
+
+on:
+  push:
+    branches: [dawarich-check]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Start Dawarich with its official compose file
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/Freika/dawarich/master/docker/docker-compose.yml -o compose.yml
+          export SECRET_KEY_BASE=$(openssl rand -hex 64)
+          docker compose -f compose.yml up -d dawarich_app
+          for i in $(seq 1 120); do curl -sf localhost:3000/api/v1/health >/dev/null && break; sleep 5; done
+          echo "::notice::Dawarich health: $(curl -s localhost:3000/api/v1/health) | version: $(docker exec dawarich_app sh -c 'cat .app_version 2>/dev/null || echo ?')"
+
+      - name: Get an API key
+        run: |
+          key=$(docker exec dawarich_app bin/rails runner 'u = User.first || User.create!(email: "ci@example.com", password: "password123456", password_confirmation: "password123456"); puts u.api_key' 2>/dev/null | tail -1)
+          test -n "$key"
+          echo "KEY=$key" >> "$GITHUB_ENV"
+
+      - name: Send the same requests ParkPal sends
+        run: |
+          cat > check.py <<'PY'
+          import json, os, urllib.request, urllib.error
+          BASE = "http://localhost:3000"
+          KEY = os.environ["KEY"]
+          def call(method, path, body=None, key=KEY):
+              req = urllib.request.Request(BASE + path, method=method, data=json.dumps(body).encode() if body else None,
+                  headers={"Authorization": f"Bearer {key}", "Accept": "application/json", "User-Agent": "ParkPal/1.0 (personal Android app)",
+                           **({"Content-Type": "application/json"} if body else {})})
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as r: return r.status, json.loads(r.read() or b"null")
+              except urllib.error.HTTPError as e: return e.code, e.read().decode()[:300]
+          ok = True
+          def report(name, cond, detail):
+              global ok
+              ok = ok and cond
+              print(("::notice::PASS " if cond else "::error::FAIL ") + name + " | " + str(detail)[:400])
+          c, me = call("GET", "/api/v1/users/me")
+          report("users/me with Bearer key", c == 200 and me["user"]["email"], (c, me if c != 200 else me["user"]["email"]))
+          place = {"place": {"name": "ParkPal CI Garage", "latitude": 38.8990, "longitude": -77.0050, "source": "manual",
+                             "note": "Saved from ParkPal · Garage · Paid · Height limit 6'8\""}}
+          c, p = call("POST", "/api/v1/places", place)
+          report("create place", c in (200, 201) and isinstance(p, dict) and p.get("id"), (c, p))
+          c, places = call("GET", "/api/v1/places")
+          mine = [x for x in places if isinstance(places, list) and x.get("name") == "ParkPal CI Garage"] if c == 200 else []
+          report("list places includes it with note", bool(mine) and mine[0].get("note", "").startswith("Saved from ParkPal"), (c, mine[:1] or places))
+          visit = {"visit": {"name": "Parked · Station Lot (for Union Station)", "latitude": 38.8973, "longitude": -77.0065,
+                             "started_at": "2026-10-30T14:00:00Z", "ended_at": "2026-10-30T15:30:00Z", "status": "confirmed"}}
+          c, v = call("POST", "/api/v1/visits", visit)
+          report("create visit", c == 200 and isinstance(v, dict) and v.get("id"), (c, v))
+          c, vs = call("GET", "/api/v1/visits?start_at=2026-10-30T00:00:00Z&end_at=2026-10-31T00:00:00Z")
+          found = [x for x in vs if x.get("name", "").startswith("Parked ·")] if c == 200 and isinstance(vs, list) else []
+          report("visit is on the timeline", bool(found), (c, [(x.get("name"), x.get("status"), x.get("started_at"), x.get("ended_at")) for x in found] or vs))
+          c, _ = call("GET", "/api/v1/users/me", key="wrong-key")
+          report("wrong key is refused", c == 401, c)
+          raise SystemExit(0 if ok else 1)
+          PY
+          python3 check.py
