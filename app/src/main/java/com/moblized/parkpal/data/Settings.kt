@@ -32,6 +32,15 @@ data class AppSettings(
     /** Your own ParkPal parking server (e.g. on TrueNAS). Blank uses the public servers. */
     val serverUrl: String = "",
     val serverToken: String = "",
+    /** Your Dawarich (location history) server and API key. */
+    val dawarichUrl: String = "",
+    val dawarichKey: String = "",
+    /** Add finished parking stops to your Dawarich timeline as visits. */
+    val dawarichVisits: Boolean = true,
+    /** Offer your Dawarich places as destinations in Where to? and Android Auto. */
+    val dawarichPlaces: Boolean = true,
+    /** Save starred garages as Dawarich places. */
+    val dawarichFavorites: Boolean = true,
 )
 
 object SettingsStore {
@@ -57,6 +66,11 @@ object SettingsStore {
             cartoKey = prefs.getString("cartoKey", null) ?: d.cartoKey,
             serverUrl = prefs.getString("serverUrl", null) ?: d.serverUrl,
             serverToken = prefs.getString("serverToken", null) ?: d.serverToken,
+            dawarichUrl = prefs.getString("dawarichUrl", null) ?: d.dawarichUrl,
+            dawarichKey = prefs.getString("dawarichKey", null) ?: d.dawarichKey,
+            dawarichVisits = prefs.getBoolean("dawarichVisits", d.dawarichVisits),
+            dawarichPlaces = prefs.getBoolean("dawarichPlaces", d.dawarichPlaces),
+            dawarichFavorites = prefs.getBoolean("dawarichFavorites", d.dawarichFavorites),
         )
     }
 
@@ -78,6 +92,11 @@ object SettingsStore {
             .putString("cartoKey", s.cartoKey)
             .putString("serverUrl", s.serverUrl)
             .putString("serverToken", s.serverToken)
+            .putString("dawarichUrl", s.dawarichUrl)
+            .putString("dawarichKey", s.dawarichKey)
+            .putBoolean("dawarichVisits", s.dawarichVisits)
+            .putBoolean("dawarichPlaces", s.dawarichPlaces)
+            .putBoolean("dawarichFavorites", s.dawarichFavorites)
             .apply()
     }
 }

@@ -112,6 +112,8 @@ object ParkStore {
         all.drop(MAX_HISTORY).forEach { deletePhoto(it.photoPath) }
         setHistory(all.take(MAX_HISTORY))
         setActive(null)
+        // Send the finished stop to Dawarich (if connected).
+        DawarichSync.kick(appContext)
     }
 
     @Synchronized
@@ -134,6 +136,8 @@ object ParkStore {
         val updated = if (list.any { it.id == place.id }) list.filterNot { it.id == place.id } else listOf(place) + list
         _favorites.value = updated
         writeList(KEY_FAVORITES, updated.map { it.toJson() })
+        // Newly starred garages go to Dawarich as places (if connected). Un-starring leaves Dawarich alone.
+        if (updated.size > list.size) DawarichSync.kick(appContext)
     }
 
     fun deletePhoto(path: String?) {

@@ -64,6 +64,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.moblized.parkpal.data.AppSettings
+import com.moblized.parkpal.data.Dawarich
+import com.moblized.parkpal.data.DawarichSync
 import com.moblized.parkpal.data.ParkStore
 import com.moblized.parkpal.data.ParkingServer
 import com.moblized.parkpal.data.SettingsStore
@@ -197,6 +200,10 @@ fun SettingsScreen(vm: MainViewModel) {
             ParkingServerSettings(s.serverUrl, s.serverToken)
         }
 
+        Section("Dawarich") {
+            DawarichSettings(s)
+        }
+
         Section("Map style") {
             var key by remember { mutableStateOf(s.cartoKey) }
             Text(
@@ -274,6 +281,137 @@ fun SettingsScreen(vm: MainViewModel) {
                     "so always check posted signs and height bars before you pull in.",
             )
         }
+    }
+}
+
+/** Connection to your Dawarich location-history server, and what ParkPal shares with it. */
+@Composable
+private fun DawarichSettings(s: AppSettings) {
+    val ctx = LocalContext.current
+    var url by remember { mutableStateOf(s.dawarichUrl) }
+    var key by remember { mutableStateOf(s.dawarichKey) }
+    var showKey by remember { mutableStateOf(false) }
+    var testing by remember { mutableStateOf(false) }
+    var result by remember { mutableStateOf<String?>(null) }
+    var resultOk by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    Text(
+        if (Dawarich.configured(s)) "Connected to your Dawarich." else "Link ParkPal with your self-hosted Dawarich.",
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    OutlinedTextField(
+        value = url,
+        onValueChange = { v ->
+            url = v
+            result = null
+            SettingsStore.update { it.copy(dawarichUrl = v.trim()) }
+        },
+        label = { Text("Dawarich address") },
+        placeholder = { Text("dawarich.yourdomain.org") },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+        modifier = Modifier.fillMaxWidth(),
+    )
+    OutlinedTextField(
+        value = key,
+        onValueChange = { v ->
+            key = v
+            result = null
+            SettingsStore.update { it.copy(dawarichKey = v.trim()) }
+        },
+        label = { Text("API key") },
+        singleLine = true,
+        visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
+        trailingIcon = {
+            IconButton(onClick = { showKey = !showKey }) {
+                Icon(
+                    if (showKey) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                    contentDescription = if (showKey) "Hide key" else "Show key",
+                )
+            }
+        },
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Hint("Your API key is on your account page in Dawarich.")
+
+    ToggleRow(
+        "Add parking to my timeline",
+        "Each stop shows up as a \"Parked · …\" visit when you end parking.",
+        s.dawarichVisits,
+    ) { on -> SettingsStore.update { it.copy(dawarichVisits = on) } }
+    ToggleRow(
+        "Use my places as destinations",
+        "Your Dawarich places show in Where to? and Android Auto.",
+        s.dawarichPlaces,
+    ) { on ->
+        SettingsStore.update { it.copy(dawarichPlaces = on) }
+        scope.launch { DawarichSync.refreshPlaces(force = true) }
+    }
+    ToggleRow(
+        "Save starred garages as places",
+        "Starring a garage also adds it to Dawarich.",
+        s.dawarichFavorites,
+    ) { on ->
+        SettingsStore.update { it.copy(dawarichFavorites = on) }
+        if (on) DawarichSync.kick(ctx)
+    }
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        OutlinedButton(
+            enabled = url.isNotBlank() && key.isNotBlank() && !testing,
+            onClick = {
+                testing = true
+                result = null
+                scope.launch {
+                    try {
+                        val email = Dawarich.me(url, key)
+                        val count = Dawarich.places(url, key).count { !it.note.startsWith(Dawarich.PARKPAL_NOTE) }
+                        resultOk = true
+                        result = "Connected" + (if (email.isNotBlank()) " as $email" else "") +
+                            " · " + (if (count == 1) "1 place" else "$count places")
+                        DawarichSync.refreshPlaces(force = true)
+                        DawarichSync.kick(ctx)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        resultOk = false
+                        result = "Couldn't connect: ${e.message ?: "no answer"}"
+                    } finally {
+                        testing = false
+                    }
+                }
+            },
+        ) {
+            Text(if (testing) "Testing…" else "Test connection")
+        }
+        if (testing) {
+            Spacer(Modifier.width(12.dp))
+            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+        }
+    }
+    result?.let {
+        Text(
+            it,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (resultOk) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+        )
+    }
+}
+
+@Composable
+private fun ToggleRow(title: String, detail: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable { onChange(!checked) },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = checked, onCheckedChange = onChange)
     }
 }
 

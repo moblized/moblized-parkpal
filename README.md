@@ -13,6 +13,7 @@ A personal Android parking app: find parking that fits your truck, save where yo
 - **Home-screen widget**: where you parked, when the meter ends, and a Walk back button.
 - **Android Auto**: nearby parking that fits your vehicle on the car screen, plus **Search** for a destination (recents listed) to see parking near it, with Navigate and Park here.
 - **Favorites and history**.
+- **Dawarich** (Settings → Dawarich): finished parking stops are added to your Dawarich timeline as "Parked · …" visits, your Dawarich places show up in Where to? and Android Auto search, and starred garages are saved as Dawarich places. Sending waits for a connection, so stops saved without signal arrive later.
 - **Dark mode** (system, light, dark, pure black). The launcher icon switches to a dark version too.
 
 ParkPal doesn't sell or reserve spots itself; booking and paying still happen in the parking company's own app.

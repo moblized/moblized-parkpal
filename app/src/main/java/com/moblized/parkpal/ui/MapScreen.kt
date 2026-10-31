@@ -38,6 +38,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DirectionsCar
@@ -136,6 +137,7 @@ fun MapScreen(vm: MainViewModel, dark: Boolean, hasLocation: Boolean) {
     val suggestions by vm.suggestions.collectAsStateWithLifecycle()
     val suggesting by vm.suggesting.collectAsStateWithLifecycle()
     val recents by vm.recents.collectAsStateWithLifecycle()
+    val myPlaces by vm.dawarichPlaces.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val icons = remember { MarkerIcons(ctx) }
 
@@ -325,22 +327,29 @@ fun MapScreen(vm: MainViewModel, dark: Boolean, hasLocation: Boolean) {
                         vm.onQueryChange("", 0.0, 0.0)
                     }
                 },
-                onFocusChange = { searchFocused = it },
+                onFocusChange = { focused ->
+                    searchFocused = focused
+                    if (focused) vm.onSearchFocused()
+                },
             )
-            val showSuggestions = searchFocused && searchText.trim().length >= 3 && suggestions.isNotEmpty()
-            val showRecents = searchFocused && searchText.isBlank() && recents.isNotEmpty()
+            val showSuggestions = searchFocused && searchText.trim().length >= 2 && suggestions.isNotEmpty()
+            val showStart = searchFocused && searchText.isBlank() && (recents.isNotEmpty() || myPlaces.isNotEmpty())
             AnimatedVisibility(
-                visible = showSuggestions || showRecents,
+                visible = showSuggestions || showStart,
                 enter = fadeIn(tween(150)) + expandVertically(tween(180)),
                 exit = fadeOut(tween(120)) + shrinkVertically(tween(150)),
             ) {
-                if (showRecents) {
-                    PlaceList(recents, isRecent = true, onPick = vm::pickDestination, onClearRecents = vm::clearRecents)
+                val sections = if (showStart) {
+                    buildList {
+                        if (myPlaces.isNotEmpty()) add(PlaceSection("Your places", myPlaces.take(6), Icons.Filled.Bookmark))
+                        if (recents.isNotEmpty()) add(PlaceSection("Recent", recents, Icons.Filled.History, vm::clearRecents))
+                    }
                 } else {
-                    PlaceList(suggestions, isRecent = false, onPick = vm::pickDestination, onClearRecents = null)
+                    listOf(PlaceSection(null, suggestions, Icons.Filled.Place))
                 }
+                PlaceList(sections, onPick = vm::pickDestination)
             }
-            if (!showSuggestions && !showRecents) {
+            if (!showSuggestions && !showStart) {
                 FilterRow(filters, settings.vehicleName, onChange = vm::setFilters)
                 AnimatedVisibility(visible = destination == null && total > 0, enter = fadeIn(), exit = fadeOut()) {
                     Surface(
@@ -598,47 +607,55 @@ private fun WhereToBar(
     }
 }
 
-/** Suggestions while typing, or recent destinations when the box is empty. */
+private class PlaceSection(
+    val title: String?,
+    val places: List<Destination>,
+    val icon: ImageVector,
+    val onClear: (() -> Unit)? = null,
+)
+
+/** Suggestions while typing, or your places and recent destinations when the box is empty. */
 @Composable
-private fun PlaceList(
-    places: List<Destination>,
-    isRecent: Boolean,
-    onPick: (Destination) -> Unit,
-    onClearRecents: (() -> Unit)?,
-) {
+private fun PlaceList(sections: List<PlaceSection>, onPick: (Destination) -> Unit) {
     ElevatedCard(Modifier.fillMaxWidth()) {
-        LazyColumn(Modifier.heightIn(max = 340.dp)) {
-            if (isRecent) {
-                item {
-                    Row(
-                        Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            "Recent",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.weight(1f),
-                        )
-                        if (onClearRecents != null) TextButton(onClick = onClearRecents) { Text("Clear") }
+        LazyColumn(Modifier.heightIn(max = 360.dp)) {
+            sections.forEachIndexed { index, section ->
+                val title = section.title
+                if (title != null) {
+                    item(key = "header-$index") {
+                        Row(
+                            Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                title,
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f).padding(vertical = 10.dp),
+                            )
+                            section.onClear?.let { clear -> TextButton(onClick = clear) { Text("Clear") } }
+                        }
                     }
                 }
-            }
-            items(places, key = { "${it.title}|${it.lat}|${it.lon}" }) { d ->
-                ListItem(
-                    headlineContent = { Text(d.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    supportingContent = if (d.subtitle.isNotBlank()) {
-                        { Text(d.subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                    } else {
-                        null
-                    },
-                    leadingContent = {
-                        Icon(if (isRecent) Icons.Filled.History else Icons.Filled.Place, contentDescription = null)
-                    },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                    modifier = Modifier.clickable { onPick(d) },
-                )
-                HorizontalDivider()
+                items(section.places, key = { "$index|${it.title}|${it.lat}|${it.lon}" }) { d ->
+                    ListItem(
+                        headlineContent = { Text(d.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        supportingContent = if (d.subtitle.isNotBlank()) {
+                            { Text(d.subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                        } else {
+                            null
+                        },
+                        leadingContent = {
+                            Icon(
+                                if (d.source == "dawarich") Icons.Filled.Bookmark else section.icon,
+                                contentDescription = null,
+                            )
+                        },
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                        modifier = Modifier.clickable { onPick(d) },
+                    )
+                    HorizontalDivider()
+                }
             }
         }
     }

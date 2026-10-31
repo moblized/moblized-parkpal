@@ -80,12 +80,15 @@ data class Destination(
     val subtitle: String,
     val lat: Double,
     val lon: Double,
+    /** "dawarich" for your Dawarich places; null for search results and dropped pins. */
+    val source: String? = null,
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("title", title)
         put("subtitle", subtitle)
         put("lat", lat)
         put("lon", lon)
+        putOpt("source", source)
     }
 
     companion object {
@@ -94,6 +97,7 @@ data class Destination(
             subtitle = o.optString("subtitle", ""),
             lat = o.getDouble("lat"),
             lon = o.getDouble("lon"),
+            source = o.str("source"),
         )
     }
 }

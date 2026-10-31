@@ -85,6 +85,9 @@ dependencies {
     // Android Auto
     implementation("androidx.car.app:app:1.4.0")
 
+    // Background sending to Dawarich (waits for a connection, retries)
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
+
     // Spot photos
     implementation("io.coil-kt:coil-compose:2.7.0")
 }

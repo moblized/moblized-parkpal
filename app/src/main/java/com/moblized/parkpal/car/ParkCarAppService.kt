@@ -29,6 +29,7 @@ import androidx.car.app.model.Template
 import androidx.car.app.validation.HostValidator
 import androidx.lifecycle.lifecycleScope
 import com.moblized.parkpal.data.Clearance
+import com.moblized.parkpal.data.DawarichSync
 import com.moblized.parkpal.data.Destination
 import com.moblized.parkpal.data.FeeInfo
 import com.moblized.parkpal.data.FitStatus
@@ -198,11 +199,20 @@ class NearbyParkingScreen(
     }
 }
 
-/** Pick where you're going. Shows recent destinations until you type. */
+/** Pick where you're going. Shows recent destinations and your Dawarich places until you type. */
 class DestinationSearchScreen(carContext: CarContext) : Screen(carContext) {
     private var results: List<Destination>? = null
     private var searching = false
     private var job: Job? = null
+
+    init {
+        // Freshen your Dawarich places in the background; the cached list shows meanwhile.
+        lifecycleScope.launch {
+            val before = DawarichSync.places.value
+            DawarichSync.refreshPlaces()
+            if (results == null && DawarichSync.places.value != before) invalidate()
+        }
+    }
 
     private fun search(text: String, delayMs: Long) {
         job?.cancel()
@@ -218,12 +228,13 @@ class DestinationSearchScreen(carContext: CarContext) : Screen(carContext) {
             searching = true
             invalidate()
             val loc = LocationHelper.quick(carContext)
+            val mine = DawarichSync.matching(q, limit = 2)
             results = try {
-                Geo.suggest(q, loc?.latitude, loc?.longitude, limit = 6)
+                DawarichSync.withMine(mine, Geo.suggest(q, loc?.latitude, loc?.longitude, limit = 6))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                emptyList()
+                mine
             }
             searching = false
             invalidate()
@@ -243,7 +254,8 @@ class DestinationSearchScreen(carContext: CarContext) : Screen(carContext) {
             .setShowKeyboardByDefault(false)
         if (searching) return builder.setLoading(true).build()
 
-        val shown = results ?: ParkStore.recents.value
+        val shown = results ?: (ParkStore.recents.value.take(3) + DawarichSync.places.value)
+            .distinctBy { it.title.lowercase() }
         val items = ItemList.Builder()
         if (shown.isEmpty()) {
             items.setNoItemsMessage(if (results == null) "Search for where you're going" else "No places found")

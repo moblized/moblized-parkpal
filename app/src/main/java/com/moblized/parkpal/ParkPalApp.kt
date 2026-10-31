@@ -1,6 +1,7 @@
 package com.moblized.parkpal
 
 import android.app.Application
+import com.moblized.parkpal.data.DawarichSync
 import com.moblized.parkpal.data.OverpassApi
 import com.moblized.parkpal.data.ParkStore
 import com.moblized.parkpal.data.ParkingRepo
@@ -15,6 +16,9 @@ class ParkPalApp : Application() {
         SettingsStore.init(this)
         ParkStore.init(this)
         ParkingRepo.init(this)
+        DawarichSync.init(this)
+        // Send anything waiting for Dawarich and refresh your places.
+        DawarichSync.kick(this)
         Notifications.createChannels(this)
 
         val osm = Configuration.getInstance()

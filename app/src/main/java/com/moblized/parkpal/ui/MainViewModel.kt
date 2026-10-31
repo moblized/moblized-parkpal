@@ -12,6 +12,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.moblized.parkpal.data.AppSettings
 import com.moblized.parkpal.data.Clearance
+import com.moblized.parkpal.data.DawarichSync
 import com.moblized.parkpal.data.Destination
 import com.moblized.parkpal.data.FeeInfo
 import com.moblized.parkpal.data.FitStatus
@@ -300,21 +301,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         suggestJob?.cancel()
         _suggesting.value = false
         val q = text.trim()
+        // Your Dawarich places that match come first, with no wait.
+        val mine = DawarichSync.matching(q)
         if (q.length < 3) {
-            _suggestions.value = emptyList()
+            _suggestions.value = mine
             return
         }
         // Already looked this up (e.g. after a backspace): show it with no wait.
         Geo.cachedSuggestions(q, biasLat, biasLon)?.let {
-            _suggestions.value = it
+            _suggestions.value = DawarichSync.withMine(mine, it)
             return
         }
+        if (mine.isNotEmpty()) _suggestions.value = mine
         suggestJob = viewModelScope.launch {
             delay(250)
             _suggesting.value = true
             try {
                 val results = Geo.suggest(q, biasLat, biasLon)
-                if (lastQuery == text) _suggestions.value = results
+                if (lastQuery == text) _suggestions.value = DawarichSync.withMine(mine, results)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -356,6 +360,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun clearRecents() = ParkStore.clearRecents()
+
+    /** Your Dawarich places, shown when the search box is empty. */
+    val dawarichPlaces: StateFlow<List<Destination>> = DawarichSync.places
+
+    /** Search box tapped: freshen your Dawarich places if they're a few minutes old. */
+    fun onSearchFocused() {
+        viewModelScope.launch { DawarichSync.refreshPlaces() }
+    }
 
     // ---- Trip ----
 
