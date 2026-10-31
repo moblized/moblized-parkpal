@@ -366,7 +366,9 @@ private fun DawarichSettings(s: AppSettings) {
                 scope.launch {
                     try {
                         val email = Dawarich.me(url, key)
-                        val count = Dawarich.places(url, key).count { !it.note.startsWith(Dawarich.PARKPAL_NOTE) }
+                        val count = Dawarich.places(url, key).count {
+                            !it.note.startsWith(Dawarich.PARKPAL_NOTE) && !it.name.startsWith("Parked · ")
+                        }
                         resultOk = true
                         result = "Connected" + (if (email.isNotBlank()) " as $email" else "") +
                             " · " + (if (count == 1) "1 place" else "$count places")

@@ -35,6 +35,7 @@ object DawarichSync {
     private const val PREFS = "parkpal_dawarich"
     private const val WORK = "dawarich-sync"
     private const val PLACES_MAX_AGE_MS = 10 * 60_000L
+    private const val VISIT_PREFIX = "Parked · "
 
     private lateinit var prefs: SharedPreferences
     private lateinit var appContext: Context
@@ -87,7 +88,8 @@ object DawarichSync {
         if (!force && System.currentTimeMillis() - placesLoadedAt < PLACES_MAX_AGE_MS) return
         try {
             val list = Dawarich.places(s.dawarichUrl, s.dawarichKey)
-                .filterNot { it.note.startsWith(Dawarich.PARKPAL_NOTE) }
+                // Skip what ParkPal itself created: starred garages, and the places Dawarich makes for parking visits.
+                .filterNot { it.note.startsWith(Dawarich.PARKPAL_NOTE) || it.name.startsWith(VISIT_PREFIX) }
                 .sortedByDescending { it.visits }
                 .map { p ->
                     val bits = buildList {
@@ -132,7 +134,7 @@ object DawarichSync {
             for (session in pending) {
                 val ended = max(session.endedAt ?: System.currentTimeMillis(), session.startedAt + 60_000L)
                 val name = buildString {
-                    append("Parked · ").append(session.title())
+                    append(VISIT_PREFIX).append(session.title())
                     session.destName?.let { append(" (for ").append(it).append(")") }
                 }
                 val ok = sendOrSkip {
