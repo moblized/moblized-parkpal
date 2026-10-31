@@ -94,6 +94,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.moblized.parkpal.data.Clearance
 import com.moblized.parkpal.data.Destination
 import com.moblized.parkpal.data.ParkingPlace
+import com.moblized.parkpal.data.Poi
+import com.moblized.parkpal.data.PoiCategory
 import com.moblized.parkpal.ui.theme.ParkColors
 import com.moblized.parkpal.util.Format
 import com.moblized.parkpal.util.LocationHelper
@@ -110,7 +112,7 @@ import org.osmdroid.views.overlay.TilesOverlay
 import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
 import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
 
-private enum class BottomMode { PLACE, TRIP, AREA }
+private enum class BottomMode { POI, PLACE, TRIP, EXPLORE, AREA }
 
 @Composable
 fun MapScreen(vm: MainViewModel, dark: Boolean, hasLocation: Boolean) {
@@ -138,6 +140,11 @@ fun MapScreen(vm: MainViewModel, dark: Boolean, hasLocation: Boolean) {
     val suggesting by vm.suggesting.collectAsStateWithLifecycle()
     val recents by vm.recents.collectAsStateWithLifecycle()
     val myPlaces by vm.dawarichPlaces.collectAsStateWithLifecycle()
+    val exploreCategory by vm.exploreCategory.collectAsStateWithLifecycle()
+    val pois by vm.pois.collectAsStateWithLifecycle()
+    val exploreLoading by vm.exploreLoading.collectAsStateWithLifecycle()
+    val selectedPoi by vm.selectedPoi.collectAsStateWithLifecycle()
+    val exploreExpanded by vm.exploreExpanded.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val icons = remember { MarkerIcons(ctx) }
 
@@ -165,7 +172,7 @@ fun MapScreen(vm: MainViewModel, dark: Boolean, hasLocation: Boolean) {
     remember {
         val receiver = object : MapEventsReceiver {
             override fun singleTapConfirmedHelper(p: GeoPoint?): Boolean {
-                vm.select(null)
+                vm.clearSelection()
                 focusManager.clearFocus()
                 return false
             }
@@ -188,6 +195,7 @@ fun MapScreen(vm: MainViewModel, dark: Boolean, hasLocation: Boolean) {
             onPlace = { vm.select(it) },
             onParked = { vm.setTab(AppTab.SPOT) },
             onDestination = { vm.select(null) },
+            onPoi = { vm.selectPoi(it) },
         )
     }
 
@@ -274,10 +282,12 @@ fun MapScreen(vm: MainViewModel, dark: Boolean, hasLocation: Boolean) {
         fitMap(mapView, pts, density)
     }
 
-    BackHandler(enabled = searchFocused || selected != null || destination != null) {
+    BackHandler(enabled = searchFocused || selected != null || selectedPoi != null || destination != null || exploreCategory != null) {
         when {
             searchFocused -> focusManager.clearFocus()
+            selectedPoi != null -> vm.selectPoi(null)
             selected != null -> vm.select(null)
+            exploreCategory != null -> vm.closeExplore()
             else -> vm.clearDestination()
         }
     }
@@ -291,7 +301,17 @@ fun MapScreen(vm: MainViewModel, dark: Boolean, hasLocation: Boolean) {
                 val selPair = sel?.let { s ->
                     visible.firstOrNull { it.first.id == s.id } ?: (s to Clearance.fitStatus(s, settings))
                 }
-                layers.sync(visible, selPair, route, destination, active, dark)
+                val exploring = exploreCategory != null
+                layers.sync(
+                    places = if (exploring) emptyList() else visible,
+                    selected = selPair,
+                    route = route,
+                    destination = destination,
+                    parked = active,
+                    dark = dark,
+                    pois = pois,
+                    selectedPoi = selectedPoi,
+                )
             },
         )
 
@@ -350,8 +370,19 @@ fun MapScreen(vm: MainViewModel, dark: Boolean, hasLocation: Boolean) {
                 PlaceList(sections, onPick = vm::pickDestination)
             }
             if (!showSuggestions && !showStart) {
-                FilterRow(filters, settings.vehicleName, onChange = vm::setFilters)
-                AnimatedVisibility(visible = destination == null && total > 0, enter = fadeIn(), exit = fadeOut()) {
+                if (destination == null) {
+                    CategoryRow(exploreCategory) { c ->
+                        focusManager.clearFocus()
+                        val center = mapView.mapCenter
+                        vm.toggleExplore(c, center.latitude, center.longitude)
+                    }
+                }
+                if (exploreCategory == null) FilterRow(filters, settings.vehicleName, onChange = vm::setFilters)
+                AnimatedVisibility(
+                    visible = destination == null && exploreCategory == null && total > 0,
+                    enter = fadeIn(),
+                    exit = fadeOut(),
+                ) {
                     Surface(
                         shape = RoundedCornerShape(50),
                         color = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.94f),
@@ -380,7 +411,11 @@ fun MapScreen(vm: MainViewModel, dark: Boolean, hasLocation: Boolean) {
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
-                AnimatedVisibility(visible = destination == null && selected == null, enter = fadeIn(), exit = fadeOut()) {
+                AnimatedVisibility(
+                    visible = destination == null && selected == null && exploreCategory == null,
+                    enter = fadeIn(),
+                    exit = fadeOut(),
+                ) {
                     Legend()
                 }
                 Spacer(Modifier.weight(1f))
@@ -410,13 +445,19 @@ fun MapScreen(vm: MainViewModel, dark: Boolean, hasLocation: Boolean) {
             val lastSel = remember { arrayOfNulls<ParkingPlace>(1) }
             val lastDest = remember { arrayOfNulls<Destination>(1) }
             val lastSummary = remember { arrayOfNulls<TripSummary>(1) }
+            val lastPoi = remember { arrayOfNulls<Poi>(1) }
+            val lastCategory = remember { arrayOfNulls<PoiCategory>(1) }
             selected?.let { lastSel[0] = it }
             destination?.let { lastDest[0] = it }
             tripSummary?.let { lastSummary[0] = it }
+            selectedPoi?.let { lastPoi[0] = it }
+            exploreCategory?.let { lastCategory[0] = it }
 
             val mode = when {
+                selectedPoi != null -> BottomMode.POI
                 selected != null -> BottomMode.PLACE
                 destination != null && tripSummary != null -> BottomMode.TRIP
+                exploreCategory != null -> BottomMode.EXPLORE
                 else -> BottomMode.AREA
             }
             AnimatedContent(
@@ -431,6 +472,52 @@ fun MapScreen(vm: MainViewModel, dark: Boolean, hasLocation: Boolean) {
                 label = "bottom card",
             ) { m ->
                 when (m) {
+                    BottomMode.POI -> {
+                        val poi = selectedPoi ?: lastPoi[0]
+                        if (poi != null) {
+                            val here = myLocation.myLocation
+                            val r = route
+                            val extra = buildList<Pair<ImageVector, String>> {
+                                if (r != null && r.placeId == poi.id) {
+                                    add(Icons.Filled.DirectionsCar to "About ${Format.driveTime(r.seconds)} drive · ${Format.distance(r.meters)}")
+                                } else if (routeLoading) {
+                                    add(Icons.Filled.DirectionsCar to "Finding route…")
+                                }
+                            }
+                            PoiCard(
+                                poi = poi,
+                                distance = here?.let { Format.distance(distanceMeters(it.latitude, it.longitude, poi.lat, poi.lon)) },
+                                extraLines = extra,
+                                saved = myPlaces.any {
+                                    it.title.equals(poi.name, ignoreCase = true) && distanceMeters(it.lat, it.lon, poi.lat, poi.lon) < 150
+                                },
+                                canSave = settings.dawarichUrl.isNotBlank() && settings.dawarichKey.isNotBlank(),
+                                onClose = { vm.selectPoi(null) },
+                                onGo = { vm.goToPoi(poi) },
+                                onParking = { vm.parkingNearPoi(poi) },
+                                onSave = { vm.savePoiToDawarich(poi) },
+                            )
+                        }
+                    }
+                    BottomMode.EXPLORE -> {
+                        val category = exploreCategory ?: lastCategory[0]
+                        if (category != null) {
+                            val here = myLocation.myLocation
+                            ExploreSheet(
+                                category = category,
+                                pois = pois,
+                                loading = exploreLoading,
+                                from = here?.let { it.latitude to it.longitude },
+                                expanded = exploreExpanded,
+                                onToggle = vm::toggleExploreSheet,
+                                onSelect = { vm.selectPoi(it) },
+                                onSearchHere = {
+                                    val c = mapView.mapCenter
+                                    vm.exploreHere(c.latitude, c.longitude)
+                                },
+                            )
+                        }
+                    }
                     BottomMode.PLACE -> {
                         val sel = selected ?: lastSel[0]
                         if (sel != null) {

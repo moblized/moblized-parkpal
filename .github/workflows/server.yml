@@ -2,7 +2,7 @@ name: Parking server test
 
 on:
   push:
-    branches: [main]
+    branches: [main, next]
     paths:
       - "server/**"
       - ".github/workflows/server.yml"
@@ -55,4 +55,11 @@ jobs:
           echo "::notice::Parking within 1 km of Union Station: $n places ($with_height with height limits) in ${t}s"
           echo "::notice::Closest: $(jq -c '.elements[0]' result.json)"
           test "$n" -gt 0
-          grep "parking " server.log | tail -2 | while read -r l; do echo "::notice::$l"; done
+          for c in gas food coffee groceries hotels rest; do
+            q="localhost:8099/api/places?lat=38.8973&lon=-77.0063&radius=3000&category=$c"
+            t=$(curl -s -o places.json -w "%{time_total}" -H "X-ParkPal-Token: test-token" --compressed "$q")
+            m=$(jq '.elements | length' places.json)
+            echo "::notice::$c within 3 km of Union Station: $m places in ${t}s, closest: $(jq -c '.elements[0].tags.name' places.json)"
+          done
+          test "$(curl -s -H 'X-ParkPal-Token: test-token' 'localhost:8099/api/places?lat=38.8973&lon=-77.0063&radius=3000&category=food' | jq '.elements | length')" -gt 0
+          grep -E "parking |gas |food " server.log | tail -3 | while read -r l; do echo "::notice::$l"; done

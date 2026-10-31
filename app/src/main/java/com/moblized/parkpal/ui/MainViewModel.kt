@@ -13,8 +13,10 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.moblized.parkpal.data.AppSettings
 import com.moblized.parkpal.data.Clearance
+import com.moblized.parkpal.data.Dawarich
 import com.moblized.parkpal.data.DawarichSync
 import com.moblized.parkpal.data.Destination
+import com.moblized.parkpal.data.ExploreRepo
 import com.moblized.parkpal.data.FeeInfo
 import com.moblized.parkpal.data.FitStatus
 import com.moblized.parkpal.data.Geo
@@ -24,6 +26,8 @@ import com.moblized.parkpal.data.ParkStore
 import com.moblized.parkpal.data.ParkingKind
 import com.moblized.parkpal.data.ParkingPlace
 import com.moblized.parkpal.data.ParkingSession
+import com.moblized.parkpal.data.Poi
+import com.moblized.parkpal.data.PoiCategory
 import com.moblized.parkpal.data.RouteApi
 import com.moblized.parkpal.data.SettingsStore
 import com.moblized.parkpal.update.UpdateInfo
@@ -245,25 +249,155 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Selects a parking place and loads the driving route to it. */
     fun select(place: ParkingPlace?) {
         _selected.value = place
+        if (place != null) _selectedPoi.value = null
+        loadRoute(place?.id, place?.lat ?: 0.0, place?.lon ?: 0.0)
+    }
+
+    /** The driving route to whatever is selected, for the line on the map and the drive time. */
+    private fun loadRoute(id: String?, lat: Double, lon: Double) {
         routeJob?.cancel()
         _route.value = null
         _routeLoading.value = false
-        if (place == null) return
+        if (id == null) return
         routeJob = viewModelScope.launch {
             val me = userLocation() ?: return@launch
-            if (distanceMeters(me.first, me.second, place.lat, place.lon) < 150) return@launch
+            if (distanceMeters(me.first, me.second, lat, lon) < 150) return@launch
             _routeLoading.value = true
             try {
-                val r = RouteApi.drive(me.first, me.second, place.lat, place.lon)
-                if (r != null && _selected.value?.id == place.id) {
-                    _route.value = RouteUi(place.id, r.points, r.meters, r.seconds)
+                val r = RouteApi.drive(me.first, me.second, lat, lon)
+                if (r != null && selectedId() == id) {
+                    _route.value = RouteUi(id, r.points, r.meters, r.seconds)
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 // No route line; the rest of the card still works.
             } finally {
-                if (_selected.value?.id == place.id) _routeLoading.value = false
+                if (selectedId() == id) _routeLoading.value = false
+            }
+        }
+    }
+
+    private fun selectedId(): String? = _selected.value?.id ?: _selectedPoi.value?.id
+
+    /** Tap on empty map: close whichever card is open. */
+    fun clearSelection() {
+        if (_selectedPoi.value != null) selectPoi(null)
+        if (_selected.value != null) select(null)
+    }
+
+    // ---- Explore (gas, food, coffee…) ----
+
+    private val _exploreCategory = MutableStateFlow<PoiCategory?>(null)
+    val exploreCategory: StateFlow<PoiCategory?> = _exploreCategory.asStateFlow()
+
+    private val _pois = MutableStateFlow<List<Poi>>(emptyList())
+    val pois: StateFlow<List<Poi>> = _pois.asStateFlow()
+
+    private val _exploreLoading = MutableStateFlow(false)
+    val exploreLoading: StateFlow<Boolean> = _exploreLoading.asStateFlow()
+
+    private val _selectedPoi = MutableStateFlow<Poi?>(null)
+    val selectedPoi: StateFlow<Poi?> = _selectedPoi.asStateFlow()
+
+    private val _exploreExpanded = MutableStateFlow(true)
+    val exploreExpanded: StateFlow<Boolean> = _exploreExpanded.asStateFlow()
+
+    private var exploreJob: Job? = null
+    private var exploreSeq = 0
+
+    /** Category button tapped: show that kind of place around [lat],[lon]; tapping the open one closes it. */
+    fun toggleExplore(category: PoiCategory, lat: Double, lon: Double) {
+        if (_exploreCategory.value == category) closeExplore() else explore(category, lat, lon)
+    }
+
+    /** "This area": look again where the map is now. */
+    fun exploreHere(lat: Double, lon: Double) {
+        explore(_exploreCategory.value ?: return, lat, lon, fit = false)
+    }
+
+    private fun explore(category: PoiCategory, lat: Double, lon: Double, fit: Boolean = true) {
+        exploreJob?.cancel()
+        val seq = ++exploreSeq
+        select(null)
+        selectPoi(null)
+        if (_exploreCategory.value != category) _pois.value = emptyList()
+        _exploreCategory.value = category
+        _exploreExpanded.value = true
+        exploreJob = viewModelScope.launch {
+            _exploreLoading.value = true
+            try {
+                val found = ExploreRepo.nearby(category, lat, lon)
+                if (seq != exploreSeq) return@launch
+                _pois.value = found
+                if (found.isEmpty()) {
+                    toast("No ${category.label.lowercase()} found around here")
+                } else if (fit) {
+                    _fit.value = listOf(lat to lon) + found.take(6).map { it.lat to it.lon }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (seq == exploreSeq) toast("Couldn't load ${category.label.lowercase()}: ${e.message ?: "network error"}")
+            } finally {
+                if (seq == exploreSeq) _exploreLoading.value = false
+            }
+        }
+    }
+
+    fun closeExplore() {
+        exploreJob?.cancel()
+        exploreSeq++
+        _exploreLoading.value = false
+        _exploreCategory.value = null
+        _pois.value = emptyList()
+        selectPoi(null)
+    }
+
+    fun toggleExploreSheet() {
+        _exploreExpanded.update { !it }
+    }
+
+    fun selectPoi(poi: Poi?) {
+        _selectedPoi.value = poi
+        if (poi != null) {
+            _selected.value = null
+            hasAutoCentered = true
+            _focus.value = MapFocus(poi.lat, poi.lon, maxOf(cameraZoom, 15.0))
+        }
+        loadRoute(poi?.id, poi?.lat ?: 0.0, poi?.lon ?: 0.0)
+    }
+
+    /** Drive straight to an Explore place. */
+    fun goToPoi(poi: Poi) {
+        // Somewhere you'd park and walk in: remember it, so parking afterwards is linked to it.
+        if (poi.category != PoiCategory.GAS && poi.category != PoiCategory.REST) ParkStore.setTrip(poi.toDestination())
+        Nav.navigate(ctx, poi.lat, poi.lon, walking = false)
+    }
+
+    /** Use an Explore place as the destination, which finds parking around it. */
+    fun parkingNearPoi(poi: Poi) {
+        pickDestination(poi.toDestination())
+        if (!settings.value.autoFindParking) findParkingNearDestination()
+    }
+
+    /** Adds an Explore place to your Dawarich places, so it shows up under "Your places". */
+    fun savePoiToDawarich(poi: Poi) {
+        val s = settings.value
+        if (!Dawarich.configured(s)) {
+            toast("Connect Dawarich in Settings to save places")
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val note = listOfNotNull("Added with ParkPal", poi.category.label, poi.address).joinToString(" · ")
+                Dawarich.createPlace(s.dawarichUrl, s.dawarichKey, poi.name, poi.lat, poi.lon, note)
+                toast("Saved ${poi.name} to Dawarich")
+                DawarichSync.refreshPlaces(force = true)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                toast("Couldn't save to Dawarich: ${e.message ?: "network error"}")
             }
         }
     }
@@ -374,6 +508,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // ---- Trip ----
 
     fun pickDestination(d: Destination, remember: Boolean = true) {
+        if (_exploreCategory.value != null) closeExplore()
         suggestJob?.cancel()
         _suggestions.value = emptyList()
         lastQuery = d.title

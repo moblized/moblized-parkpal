@@ -44,7 +44,7 @@ object OverpassApi {
      * Sends the query to the first server; if it's slow or fails, also tries the next one,
      * and returns the first good answer. Slow requests left over are cut off.
      */
-    private suspend fun fetchHedged(query: String): String {
+    internal suspend fun fetchHedged(query: String): String {
         val winner = CompletableDeferred<String>()
         val connections = CopyOnWriteArrayList<HttpURLConnection>()
         val lock = Any()

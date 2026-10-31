@@ -37,6 +37,24 @@ object ParkingServer {
         return withContext(Dispatchers.Default) { OverpassApi.parseElements(body) }
     }
 
+    /** Explore places (gas, food…) from the server's /api/places. Older servers answer 404. */
+    suspend fun places(
+        baseUrl: String,
+        token: String,
+        category: String,
+        lat: Double,
+        lon: Double,
+        radiusMeters: Int,
+    ): List<Poi> {
+        val url = String.format(
+            Locale.US, "%s/api/places?lat=%.6f&lon=%.6f&radius=%d&category=%s",
+            normalize(baseUrl), lat, lon, radiusMeters, category,
+        )
+        val body = withContext(Dispatchers.IO) { get(url, token) }
+        val requested = PoiCategory.fromKey(category) ?: PoiCategory.GAS
+        return withContext(Dispatchers.Default) { ExploreRepo.parse(body, requested) }
+    }
+
     suspend fun status(baseUrl: String, token: String): Status = withContext(Dispatchers.IO) {
         val o = JSONObject(get("${normalize(baseUrl)}/api/status", token))
         val google = o.optJSONObject("google")

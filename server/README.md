@@ -1,11 +1,13 @@
 # ParkPal parking server
 
 Your own copy of OpenStreetMap parking (lots, garages, street parking, plus height limits and fees where they're
-mapped), served to the ParkPal app in milliseconds. It replaces the free public Overpass servers, which are often
+mapped) and of the places the app's **Explore** buttons show (gas, food, coffee, groceries, hotels, rest areas),
+served to the ParkPal app in milliseconds. It replaces the free public Overpass servers, which are often
 overloaded and can take 30+ seconds or fail outright.
 
-- Downloads the US (or the regions you choose) from Geofabrik, keeps only parking, and refreshes itself weekly.
-- Answers "parking near here" in about 1 ms.
+- Downloads the US (or the regions you choose) from Geofabrik, keeps only those kinds of places, and refreshes
+  itself weekly.
+- Answers "parking near here" or "gas near here" in about 1 ms.
 - Protected by a token, so only your app can use it.
 - If the server can't be reached, the app quietly falls back to the public servers.
 
@@ -25,8 +27,8 @@ overloaded and can take 30+ seconds or fail outright.
    - `PARKPAL_TOKEN`: a long random password (you'll paste the same text into the app).
    - `/mnt/POOL/apps/parkpal`: the path of the dataset from step 1.
 4. **Save.** Open the app's **Logs**. You'll see it install its tools, then
-   `Downloading north-america/us: …`, `Picking out parking…`, `Loading parking…`, and finally
-   `Ready: N parking places`.
+   `Downloading north-america/us: …`, `Picking out parking and places…`, `Loading places…`, and finally
+   `Ready: N parking places and M other places`.
 5. **Give it an HTTPS address** the same way as your other apps (reverse proxy, Cloudflare Tunnel, etc.):
    point something like `parkpal.yourdomain.org` at `http://<TrueNAS IP>:8095`.
    To try it at home first, `http://<TrueNAS IP>:8095` works too.
@@ -35,18 +37,19 @@ overloaded and can take 30+ seconds or fail outright.
 
 You can also check it from a browser: `https://parkpal.yourdomain.org/api/status?token=YOUR_TOKEN`.
 
-## Optional: Google parking to fill gaps
+## Optional: Google places to fill gaps
 
-OpenStreetMap is the main source because it has height limits and fees. Where it has little parking mapped,
-the server can also ask Google, and adds any lots and garages OpenStreetMap is missing (and fills in names for
-unnamed lots). In the app these show "From Google Maps". Google doesn't list height limits, so they're marked
-"check for a height bar".
+OpenStreetMap is the main source because it has height limits and fees. Where it has little mapped, the server
+can also ask Google, and adds any lots and garages (or, for Explore, gas stations, restaurants and so on)
+OpenStreetMap is missing, and fills in names for unnamed lots. In the app these show "From Google Maps". Google
+doesn't list height limits, so its parking is marked "check for a height bar".
 
 **Cost:** Google gives **5,000 of these searches free each month** (Nearby Search, "Pro" tier; the server only
 asks for name, location, type and address, which keeps it on that cheapest tier). By default the server
 **stops at 4,500 a month**, only asks Google when OpenStreetMap has fewer than 8 results, and remembers each
-area for 30 days. For personal use you should stay well under the free amount. The free allowance is per Google
-billing account, so other Google Maps projects on the same account share it.
+area for 30 days. Each Explore category counts as its own search for an area (gas near home and food near home
+are two). For personal use you should stay well under the free amount. The free allowance is per Google billing
+account, so other Google Maps projects on the same account share it.
 
 **Get a key:**
 
@@ -86,9 +89,15 @@ app on TrueNAS updates it.
 ## API
 
 - `GET /health` → `ok` (no token, for health checks)
-- `GET /api/status` → `{"ready", "places", "updated", "regions", "busy", "message"}`
+- `GET /api/status` → `{"ready", "places", "pois", "explore", "updated", "regions", "busy", "message", "google"}`
 - `GET /api/parking?lat=…&lon=…&radius=…` → Overpass-style JSON (`{"elements": [...]}`), closest first,
   up to 500 places, radius up to 5000 m.
+- `GET /api/places?lat=…&lon=…&radius=…&category=…` → the same, for Explore. `category` is one of `gas`,
+  `food`, `coffee`, `groceries`, `hotels`, `rest`; radius up to 15000 m (50000 m for `rest`). Each place's tags include
+  `parkpal:category`.
+
+After this update the server rebuilds its data once on its next start (to add the Explore places); parking
+keeps working from the old data meanwhile.
 
 Send the token as the `X-ParkPal-Token` header or `?token=`.
 
