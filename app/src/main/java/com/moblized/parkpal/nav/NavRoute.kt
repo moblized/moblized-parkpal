@@ -181,7 +181,7 @@ object NavRouting {
         val lon = loc?.optDouble(0) ?: 0.0
         val duration = step.optDouble("duration", 0.0)
         val name = str(step, "name")
-        val ref = str(step, "ref").replace(";", " / ")
+        val ref = str(step, "ref").split(';').map { it.trim() }.filter { it.isNotEmpty() }.joinToString(" / ")
         val road = when {
             name.isNotEmpty() && ref.isNotEmpty() && !name.contains(ref, ignoreCase = true) -> "$name ($ref)"
             name.isNotEmpty() -> name
