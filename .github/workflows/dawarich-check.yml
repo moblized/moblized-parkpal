@@ -9,13 +9,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Start Dawarich with its official compose file
+      - name: Start Dawarich (app + background worker) with its official compose file
         run: |
           curl -fsSL https://raw.githubusercontent.com/Freika/dawarich/master/docker/docker-compose.yml -o compose.yml
           export SECRET_KEY_BASE=$(openssl rand -hex 64)
-          docker compose -f compose.yml up -d dawarich_app
+          docker compose -f compose.yml up -d dawarich_app dawarich_sidekiq
           for i in $(seq 1 120); do curl -sf localhost:3000/api/v1/health >/dev/null && break; sleep 5; done
-          echo "::notice::Dawarich health: $(curl -s localhost:3000/api/v1/health) | version: $(docker exec dawarich_app sh -c 'cat .app_version 2>/dev/null || echo ?')"
+          echo "::notice::Dawarich health: $(curl -s localhost:3000/api/v1/health)"
 
       - name: Get an API key
         run: |
@@ -23,42 +23,56 @@ jobs:
           test -n "$key"
           echo "KEY=$key" >> "$GITHUB_ENV"
 
-      - name: Send the same requests ParkPal sends
+      - name: Upload points, then read timeline, tracks and points back (same formats as ParkPal)
         run: |
           cat > check.py <<'PY'
-          import json, os, urllib.request, urllib.error
-          BASE = "http://localhost:3000"
-          KEY = os.environ["KEY"]
-          def call(method, path, body=None, key=KEY):
+          import json, os, time, urllib.request, urllib.error
+          from datetime import datetime, timezone, timedelta
+          BASE = "http://localhost:3000"; KEY = os.environ["KEY"]
+          def call(method, path, body=None):
               req = urllib.request.Request(BASE + path, method=method, data=json.dumps(body).encode() if body else None,
-                  headers={"Authorization": f"Bearer {key}", "Accept": "application/json", "User-Agent": "ParkPal/1.0 (personal Android app)",
+                  headers={"Authorization": f"Bearer {KEY}", "Accept": "application/json", "User-Agent": "ParkPal/1.0",
                            **({"Content-Type": "application/json"} if body else {})})
               try:
-                  with urllib.request.urlopen(req, timeout=30) as r: return r.status, json.loads(r.read() or b"null")
-              except urllib.error.HTTPError as e: return e.code, e.read().decode()[:300]
+                  with urllib.request.urlopen(req, timeout=60) as r: return r.status, json.loads(r.read() or b"null")
+              except urllib.error.HTTPError as e: return e.code, e.read().decode()[:400]
           ok = True
           def report(name, cond, detail):
               global ok
-              ok = ok and cond
-              print(("::notice::PASS " if cond else "::error::FAIL ") + name + " | " + str(detail)[:400])
-          c, me = call("GET", "/api/v1/users/me")
-          report("users/me with Bearer key", c == 200 and me["user"]["email"], (c, me if c != 200 else me["user"]["email"]))
-          place = {"place": {"name": "ParkPal CI Garage", "latitude": 38.8990, "longitude": -77.0050, "source": "manual",
-                             "note": "Saved from ParkPal · Garage · Paid · Height limit 6'8\""}}
-          c, p = call("POST", "/api/v1/places", place)
-          report("create place", c in (200, 201) and isinstance(p, dict) and p.get("id"), (c, p))
-          c, places = call("GET", "/api/v1/places")
-          mine = [x for x in places if isinstance(places, list) and x.get("name") == "ParkPal CI Garage"] if c == 200 else []
-          report("list places includes it with note", bool(mine) and mine[0].get("note", "").startswith("Saved from ParkPal"), (c, mine[:1] or places))
-          visit = {"visit": {"name": "Parked · Station Lot (for Union Station)", "latitude": 38.8973, "longitude": -77.0065,
-                             "started_at": "2026-10-30T14:00:00Z", "ended_at": "2026-10-30T15:30:00Z", "status": "confirmed"}}
-          c, v = call("POST", "/api/v1/visits", visit)
-          report("create visit", c == 200 and isinstance(v, dict) and v.get("id"), (c, v))
-          c, vs = call("GET", "/api/v1/visits?start_at=2026-10-30T00:00:00Z&end_at=2026-10-31T00:00:00Z")
-          found = [x for x in vs if x.get("name", "").startswith("Parked ·")] if c == 200 and isinstance(vs, list) else []
-          report("visit is on the timeline", bool(found), (c, [(x.get("name"), x.get("status"), x.get("started_at"), x.get("ended_at")) for x in found] or vs))
-          c, _ = call("GET", "/api/v1/users/me", key="wrong-key")
-          report("wrong key is refused", c == 401, c)
+              ok = ok and bool(cond)
+              print(("::notice::PASS " if cond else "::error::FAIL ") + name + " | " + json.dumps(detail, default=str)[:900])
+          # A drive: 40 points moving east every 30 s, then 20 points parked (like ParkPal records)
+          start = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(hours=2)
+          locs = []
+          for i in range(60):
+              moving = i < 40
+              lat = 38.8973 + (0.0004 * i if moving else 0.016)
+              lon = -77.0365 + (0.0012 * i if moving else 0.048)
+              ts = int((start + timedelta(seconds=30 * i)).timestamp())
+              locs.append({"type": "Feature", "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                           "properties": {"timestamp": ts, "horizontal_accuracy": 8.0, "altitude": 20.0,
+                                          "speed": 13.4 if moving else 0.0, "course": 70.0,
+                                          "battery_level": 0.8, "battery_state": "unplugged", "device_id": "parkpal-test"}})
+          c, r = call("POST", "/api/v1/points", {"locations": locs})
+          report("upload 60 points (GeoJSON batch)", c in (200, 201, 202), (c, r))
+          stored = []
+          for _ in range(30):
+              time.sleep(4)
+              c, stored = call("GET", f"/api/v1/points?start_at={start.isoformat().replace('+00:00','Z')}&per_page=500&order=asc")
+              if c == 200 and isinstance(stored, list) and len(stored) >= 60: break
+          report("points stored and readable", c == 200 and isinstance(stored, list) and len(stored) >= 60,
+                 (c, len(stored) if isinstance(stored, list) else stored, stored[0] if isinstance(stored, list) and stored else None))
+          day = start.date().isoformat()
+          c, tl = call("GET", f"/api/v1/timeline?start_at={day}T00:00:00Z&end_at={day}T23:59:59Z")
+          report("timeline day structure", c == 200 and isinstance(tl, dict) and "days" in tl, (c, tl))
+          c, tr = call("GET", f"/api/v1/tracks?start_at={day}T00:00:00Z&end_at={day}T23:59:59Z&per_page=50")
+          report("tracks endpoint", c == 200 and isinstance(tr, dict) and tr.get("type") == "FeatureCollection",
+                 (c, {"n": len(tr.get("features", [])) if isinstance(tr, dict) else None,
+                      "first": (tr.get("features") or [None])[0] if isinstance(tr, dict) else tr}))
           raise SystemExit(0 if ok else 1)
           PY
           python3 check.py
+
+      - name: Dawarich logs (on failure)
+        if: failure()
+        run: docker logs dawarich_app 2>&1 | tail -40; docker logs dawarich_sidekiq 2>&1 | tail -40
