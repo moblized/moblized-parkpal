@@ -486,6 +486,9 @@ private fun NavMap(
             setTilesScaledToDpi(true)
             setMinZoomLevel(3.0)
             setMaxZoomLevel(20.0)
+            // Until the route arrives, show the destination rather than the middle of the ocean.
+            controller.setZoom(15.0)
+            controller.setCenter(GeoPoint(state.request.dest.lat, state.request.dest.lon))
         }
     }
     val holder = remember { NavOverlays(map, icons, density) }
